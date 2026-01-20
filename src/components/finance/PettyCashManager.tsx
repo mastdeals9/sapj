@@ -504,21 +504,40 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
   }
 
   return (
-    <div className="space-y-6">
-      {/* Cash Balance Card */}
-      <div className="bg-gradient-to-r from-green-500 to-green-600 rounded-xl p-6 text-white shadow-lg">
+    <div className="space-y-4">
+      {/* Compact Header with Balance and Stats */}
+      <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl p-4 text-white shadow-lg">
         <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2 mb-2">
-              <Wallet className="w-6 h-6" />
-              <span className="text-green-100 font-medium">Petty Cash Balance</span>
+          <div className="flex items-center gap-6">
+            <div>
+              <div className="flex items-center gap-2 mb-1">
+                <Wallet className="w-5 h-5" />
+                <span className="text-green-100 text-sm font-medium">Petty Cash Balance</span>
+              </div>
+              <div className="text-3xl font-bold">
+                Rp {cashBalance.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+              </div>
             </div>
-            <div className="text-4xl font-bold">
-              Rp {cashBalance.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            <div className="flex gap-3">
+              <div className="bg-white/20 rounded-lg px-4 py-2">
+                <div className="text-green-100 text-xs">Funds In</div>
+                <div className="text-lg font-bold">
+                  Rp {transactions
+                    .filter(t => t.transaction_type === 'withdraw')
+                    .reduce((sum, t) => sum + t.amount, 0)
+                    .toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </div>
+              </div>
+              <div className="bg-white/20 rounded-lg px-4 py-2">
+                <div className="text-green-100 text-xs">Expenses Out</div>
+                <div className="text-lg font-bold">
+                  Rp {transactions
+                    .filter(t => t.transaction_type === 'expense')
+                    .reduce((sum, t) => sum + t.amount, 0)
+                    .toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </div>
+              </div>
             </div>
-            <p className="text-green-100 text-sm mt-2">
-              Available for cash expenses
-            </p>
           </div>
           <div className="flex gap-2">
             <button
@@ -527,14 +546,14 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
               className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition"
               title="Refresh"
             >
-              <RefreshCw className={`w-5 h-5 ${refreshing ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
             {canManage && (
               <button
                 onClick={() => setModalOpen(true)}
-                className="flex items-center gap-2 bg-white text-green-600 px-4 py-2 rounded-lg hover:bg-green-50 font-medium transition"
+                className="flex items-center gap-2 bg-white text-green-600 px-4 py-2 rounded-lg hover:bg-green-50 font-medium transition shadow-md"
               >
-                <Plus className="w-5 h-5" />
+                <Plus className="w-4 h-4" />
                 New Entry
               </button>
             )}
@@ -542,130 +561,96 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
         </div>
       </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-2 gap-4">
-        <div className="bg-white rounded-lg p-4 border border-gray-200">
-          <div className="flex items-center gap-2 text-blue-600 mb-2">
-            <ArrowDownCircle className="w-5 h-5" />
-            <span className="font-medium">Funds Added</span>
-          </div>
-          <div className="text-2xl font-bold text-gray-900">
-            Rp {transactions
-              .filter(t => t.transaction_type === 'withdraw')
-              .reduce((sum, t) => sum + t.amount, 0)
-              .toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <p className="text-sm text-gray-500">Total withdrawn from bank</p>
-        </div>
-        <div className="bg-white rounded-lg p-4 border border-gray-200">
-          <div className="flex items-center gap-2 text-red-600 mb-2">
-            <ArrowUpCircle className="w-5 h-5" />
-            <span className="font-medium">Expenses Paid</span>
-          </div>
-          <div className="text-2xl font-bold text-gray-900">
-            Rp {transactions
-              .filter(t => t.transaction_type === 'expense')
-              .reduce((sum, t) => sum + t.amount, 0)
-              .toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-          </div>
-          <p className="text-sm text-gray-500">Total spent from petty cash</p>
-        </div>
-      </div>
-
       {/* Transactions Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
-        <div className="p-4 border-b bg-gray-50">
-          <h3 className="font-semibold text-gray-900">Recent Transactions</h3>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full">
-            <thead className="bg-gray-50">
-              <tr>
-                <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'transaction_date' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'transaction_date', direction: dir }); }} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center gap-1">Date{sortConfig?.key === 'transaction_date' && <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Txn No</th>
-                <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'transaction_type' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'transaction_type', direction: dir }); }} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center gap-1">Type{sortConfig?.key === 'transaction_type' && <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
-                <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'description' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'description', direction: dir }); }} className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center gap-1">Description{sortConfig?.key === 'description' && <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Paid To / Source</th>
-                <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase">Staff</th>
-                <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'amount' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'amount', direction: dir }); }} className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center justify-end gap-1">Debit (In){sortConfig?.key === 'amount' && <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
-                <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase">Credit (Out)</th>
-                {canManage && <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>}
-              </tr>
-            </thead>
-            <tbody className="divide-y">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
+        <table className="w-full">
+          <thead className="bg-gray-50 border-b border-gray-200">
+            <tr>
+              <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'transaction_date' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'transaction_date', direction: dir }); }} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center gap-1">Date{sortConfig?.key === 'transaction_date' && <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Txn No</th>
+              <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'transaction_type' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'transaction_type', direction: dir }); }} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center gap-1">Type{sortConfig?.key === 'transaction_type' && <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
+              <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'description' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'description', direction: dir }); }} className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center gap-1">Description{sortConfig?.key === 'description' && <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Paid To / Source</th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Staff</th>
+              <th onClick={() => { let dir: 'asc' | 'desc' = 'asc'; if (sortConfig?.key === 'amount' && sortConfig.direction === 'asc') dir = 'desc'; setSortConfig({ key: 'amount', direction: dir }); }} className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"><div className="flex items-center justify-end gap-1">In{sortConfig?.key === 'amount' && <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>}</div></th>
+              <th className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600">Out</th>
+              {canManage && <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Actions</th>}
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-100">
               {[...transactions].sort((a, b) => { if (!sortConfig) return 0; const { key, direction } = sortConfig; let aVal: any = a[key as keyof PettyCashTransaction]; let bVal: any = b[key as keyof PettyCashTransaction]; if (key === 'transaction_date') { aVal = new Date(aVal).getTime(); bVal = new Date(bVal).getTime(); } else if (key === 'amount') { aVal = Number(aVal) || 0; bVal = Number(bVal) || 0; } else if (typeof aVal === 'string') { aVal = aVal.toLowerCase(); bVal = bVal.toLowerCase(); } if (aVal < bVal) return direction === 'asc' ? -1 : 1; if (aVal > bVal) return direction === 'asc' ? 1 : -1; return 0; }).map(tx => (
-                <tr key={tx.id} className="hover:bg-gray-50">
-                  <td className="px-4 py-3 text-sm">
-                    {new Date(tx.transaction_date).toLocaleDateString('id-ID')}
+                <tr key={tx.id} className="hover:bg-green-50/50 transition-colors">
+                  <td className="px-4 py-2.5 text-xs font-medium text-gray-900">
+                    {new Date(tx.transaction_date).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: '2-digit' })}
                   </td>
-                  <td className="px-4 py-3 font-mono text-sm">{tx.transaction_number}</td>
-                  <td className="px-4 py-3">
-                    <span className={`inline-flex items-center gap-1 px-2 py-1 rounded text-xs font-medium ${
-                      tx.transaction_type === 'withdraw' 
-                        ? 'bg-blue-100 text-blue-700' 
+                  <td className="px-4 py-2.5 font-mono text-xs text-gray-700">{tx.transaction_number}</td>
+                  <td className="px-4 py-2.5">
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold ${
+                      tx.transaction_type === 'withdraw'
+                        ? 'bg-blue-100 text-blue-700'
                         : 'bg-red-100 text-red-700'
                     }`}>
                       {tx.transaction_type === 'withdraw' ? (
                         <>
                           <ArrowDownCircle className="w-3 h-3" />
-                          Add Funds
+                          FUND
                         </>
                       ) : (
                         <>
                           <ArrowUpCircle className="w-3 h-3" />
-                          Expense
+                          EXPENSE
                         </>
                       )}
                     </span>
                   </td>
-                  <td className="px-4 py-3 text-sm">
-                    <div>{tx.description}</div>
+                  <td className="px-4 py-2.5 text-xs text-gray-900">
+                    <div className="line-clamp-1">{tx.description}</div>
                     {tx.expense_category && (
-                      <span className="text-xs text-gray-500">{tx.expense_category}</span>
+                      <span className="text-[10px] text-gray-500">{tx.expense_category}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {tx.transaction_type === 'expense' ? tx.paid_to : tx.source}
+                  <td className="px-4 py-2.5 text-xs text-gray-600">
+                    <div className="line-clamp-1">{tx.transaction_type === 'expense' ? tx.paid_to : tx.source}</div>
                     {tx.bank_accounts && (
-                      <span className="text-xs block text-gray-400">
+                      <span className="text-[10px] text-gray-400">
                         {tx.bank_accounts.account_name}
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-sm text-gray-600">
-                    {tx.transaction_type === 'expense' 
-                      ? tx.paid_by_staff_name 
+                  <td className="px-4 py-2.5 text-xs text-gray-600">
+                    {tx.transaction_type === 'expense'
+                      ? tx.paid_by_staff_name
                       : tx.received_by_staff_name}
                   </td>
-                  <td className="px-4 py-3 text-right font-medium text-blue-600">
-                    {tx.transaction_type === 'withdraw' ? `Rp ${tx.amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                  <td className="px-4 py-2.5 text-right font-semibold text-blue-700 text-xs">
+                    {tx.transaction_type === 'withdraw' ? `Rp ${tx.amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'}
                   </td>
-                  <td className="px-4 py-3 text-right font-medium text-red-600">
-                    {tx.transaction_type === 'expense' ? `Rp ${tx.amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '-'}
+                  <td className="px-4 py-2.5 text-right font-semibold text-red-700 text-xs">
+                    {tx.transaction_type === 'expense' ? `Rp ${tx.amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'}
                   </td>
                   {canManage && (
-                    <td className="px-4 py-3">
-                      <div className="flex items-center justify-center gap-2">
+                    <td className="px-4 py-2.5">
+                      <div className="flex items-center justify-center gap-1.5">
                         <button
                           onClick={() => handleView(tx)}
-                          className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                          title="View Details"
+                          className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                          title="View"
                         >
-                          <Eye className="w-4 h-4" />
+                          <Eye className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => handleEdit(tx)}
-                          className="p-1 text-green-600 hover:bg-green-50 rounded"
+                          className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
                           title="Edit"
                         >
-                          <Edit2 className="w-4 h-4" />
+                          <Edit2 className="w-3.5 h-3.5" />
                         </button>
                         <button
                           onClick={() => handleDelete(tx.id)}
-                          className="p-1 text-red-600 hover:bg-red-50 rounded"
+                          className="p-1 text-red-600 hover:bg-red-50 rounded transition-colors"
                           title="Delete"
                         >
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         </button>
                       </div>
                     </td>
@@ -674,15 +659,15 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
               ))}
               {/* Totals Row */}
               {transactions.length > 0 && (
-                <tr className="bg-blue-50 border-t-2 border-blue-200 font-bold">
-                  <td colSpan={5} className="px-4 py-3 text-right text-gray-900">
+                <tr className="bg-gradient-to-r from-green-50 to-emerald-100 border-t-2 border-green-200 font-bold">
+                  <td colSpan={5} className="px-4 py-2.5 text-right text-xs text-gray-900">
                     TOTAL ({transactions.length} transactions):
                   </td>
-                  <td className="px-4 py-3 text-right text-blue-700 font-bold">
-                    Rp {transactions.filter(t => t.transaction_type === 'withdraw').reduce((sum, t) => sum + t.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <td className="px-4 py-2.5 text-right text-sm text-blue-700 font-bold">
+                    Rp {transactions.filter(t => t.transaction_type === 'withdraw').reduce((sum, t) => sum + t.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                   </td>
-                  <td className="px-4 py-3 text-right text-red-700 font-bold">
-                    Rp {transactions.filter(t => t.transaction_type === 'expense').reduce((sum, t) => sum + t.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <td className="px-4 py-2.5 text-right text-sm text-red-700 font-bold">
+                    Rp {transactions.filter(t => t.transaction_type === 'expense').reduce((sum, t) => sum + t.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                   </td>
                   {canManage && <td></td>}
                 </tr>
@@ -698,7 +683,6 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
               )}
             </tbody>
           </table>
-        </div>
       </div>
 
       {/* Add Transaction Modal */}

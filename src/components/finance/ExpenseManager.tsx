@@ -1086,110 +1086,124 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   };
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-semibold text-gray-900">Expense Tracker</h2>
-          <p className="text-sm text-gray-600">Track import costs, delivery expenses, and operational costs</p>
-        </div>
-        {canManage && (
-          <button
-            onClick={() => {
-              resetForm();
-              setModalOpen(true);
-            }}
-            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-          >
-            <Plus className="w-4 h-4" />
-            Record Expense
-          </button>
-        )}
-      </div>
-
-      <div className="space-y-3">
-        <div className="flex gap-2 border-b border-gray-200 overflow-x-auto">
-          {[
-            { value: 'all', label: 'All Expenses' },
-            { value: 'import', label: 'Import Costs' },
-            { value: 'sales', label: 'Sales/Delivery' },
-            { value: 'staff', label: 'Staff Costs' },
-            { value: 'operations', label: 'Operations' },
-            { value: 'admin', label: 'Admin' },
-          ].map((tab) => (
-            <button
-              key={tab.value}
-              onClick={() => setFilterType(tab.value as any)}
-              className={`px-4 py-2 font-medium transition-colors whitespace-nowrap ${
-                filterType === tab.value
-                  ? 'text-blue-600 border-b-2 border-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-2 items-center">
-          <span className="text-sm font-medium text-gray-700">Bank Reconciliation:</span>
-          {[
-            { value: 'all', label: 'All', count: expenses.length },
-            { value: 'reconciled', label: 'Reconciled', count: expenses.filter(e => reconciledExpenseIds.has(e.id)).length },
-            { value: 'not_reconciled', label: 'Not Reconciled', count: expenses.filter(e => !reconciledExpenseIds.has(e.id)).length },
-          ].map((filter) => (
-            <button
-              key={filter.value}
-              onClick={() => setReconFilter(filter.value as any)}
-              className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
-                reconFilter === filter.value
-                  ? 'bg-blue-600 text-white'
-                  : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
-              }`}
-            >
-              {filter.label} ({filter.count})
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-3 items-center bg-gray-50 p-3 rounded-lg flex-wrap">
-          <span className="text-sm font-medium text-gray-700">Date Filter:</span>
-          <input
-            type="date"
-            value={startDate}
-            onChange={(e) => setStartDate(e.target.value)}
-            placeholder="Start Date"
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
-          />
-          <span className="text-gray-500">to</span>
-          <input
-            type="date"
-            value={endDate}
-            onChange={(e) => setEndDate(e.target.value)}
-            placeholder="End Date"
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm"
-          />
-          {(startDate || endDate) && (
+    <div className="space-y-4">
+      {/* Compact Header with Summary Stats */}
+      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-4 text-white shadow-lg">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-6">
+            <div>
+              <h2 className="text-lg font-bold mb-1">Expense Tracker</h2>
+              <p className="text-blue-100 text-sm">Import, delivery, and operational costs</p>
+            </div>
+            <div className="flex gap-4 ml-4">
+              <div className="bg-white/20 rounded-lg px-4 py-2">
+                <div className="text-blue-100 text-xs">Total Expenses</div>
+                <div className="text-xl font-bold">
+                  Rp {filteredExpenses.reduce((sum, exp) => sum + exp.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </div>
+              </div>
+              <div className="bg-white/20 rounded-lg px-4 py-2">
+                <div className="text-blue-100 text-xs">Reconciled</div>
+                <div className="text-xl font-bold">
+                  {expenses.filter(e => reconciledExpenseIds.has(e.id)).length} / {expenses.length}
+                </div>
+              </div>
+            </div>
+          </div>
+          {canManage && (
             <button
               onClick={() => {
-                setStartDate(getDefaultStartDate());
-                setEndDate(getDefaultEndDate());
+                resetForm();
+                setModalOpen(true);
               }}
-              className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
+              className="flex items-center gap-2 px-4 py-2 bg-white text-blue-600 rounded-lg hover:bg-blue-50 font-medium transition-all shadow-md"
             >
-              Reset to 1 Month
+              <Plus className="w-4 h-4" />
+              New Expense
             </button>
           )}
+        </div>
+      </div>
 
-          <span className="text-sm font-medium text-gray-700 ml-4">Category:</span>
+      {/* Compact Single-Line Filter Bar */}
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          {/* Type Filter Pills */}
+          <div className="flex gap-1">
+            {[
+              { value: 'all', label: 'All', icon: '📋' },
+              { value: 'import', label: 'Import', icon: '📦' },
+              { value: 'sales', label: 'Sales', icon: '🚚' },
+              { value: 'staff', label: 'Staff', icon: '👥' },
+              { value: 'operations', label: 'Ops', icon: '🏢' },
+              { value: 'admin', label: 'Admin', icon: '📄' },
+            ].map((tab) => (
+              <button
+                key={tab.value}
+                onClick={() => setFilterType(tab.value as any)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  filterType === tab.value
+                    ? 'bg-blue-600 text-white shadow-sm'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {tab.icon} {tab.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="h-6 w-px bg-gray-300"></div>
+
+          {/* Reconciliation Filter */}
+          <div className="flex gap-1">
+            {[
+              { value: 'all', label: 'All' },
+              { value: 'reconciled', label: '✓ Linked' },
+              { value: 'not_reconciled', label: '⚠ Unlinked' },
+            ].map((filter) => (
+              <button
+                key={filter.value}
+                onClick={() => setReconFilter(filter.value as any)}
+                className={`px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
+                  reconFilter === filter.value
+                    ? 'bg-green-600 text-white shadow-sm'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {filter.label}
+              </button>
+            ))}
+          </div>
+
+          <div className="h-6 w-px bg-gray-300"></div>
+
+          {/* Date Range */}
+          <div className="flex items-center gap-2">
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="px-2 py-1 border border-gray-300 rounded-md text-xs"
+            />
+            <span className="text-gray-400 text-xs">→</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="px-2 py-1 border border-gray-300 rounded-md text-xs"
+            />
+          </div>
+
+          {/* Category Filter */}
           <select
             value={categoryFilter}
             onChange={(e) => setCategoryFilter(e.target.value)}
-            className="px-3 py-1.5 border border-gray-300 rounded-lg text-sm min-w-[200px]"
+            className="px-2 py-1 border border-gray-300 rounded-md text-xs"
           >
             <option value="all">All Categories</option>
             {expenseCategories
               .sort((a, b) => {
-                const groupOrder = { 'Import': 1, 'Sales/Delivery': 2, 'Staff': 3, 'Operations': 4, 'Administrative': 5 };
+                const groupOrder = { 'Import Costs': 1, 'Sales & Distribution': 2, 'Staff Costs': 3, 'Operations': 4, 'Administrative': 5 };
                 const aOrder = groupOrder[a.group as keyof typeof groupOrder] || 999;
                 const bOrder = groupOrder[b.group as keyof typeof groupOrder] || 999;
                 if (aOrder !== bOrder) return aOrder - bOrder;
@@ -1197,106 +1211,99 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
               })
               .map((category) => (
                 <option key={category.value} value={category.value}>
-                  {category.label} ({category.group})
+                  {category.label}
                 </option>
               ))}
           </select>
-          {categoryFilter !== 'all' && (
-            <button
-              onClick={() => setCategoryFilter('all')}
-              className="px-3 py-1.5 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300"
-            >
-              Clear Category
-            </button>
-          )}
 
+          {/* Export Button */}
           <button
             onClick={exportToCSV}
             disabled={filteredExpenses.length === 0}
-            className="ml-auto px-4 py-1.5 bg-green-600 text-white rounded-lg text-sm hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-2"
+            className="ml-auto px-3 py-1.5 bg-green-600 text-white rounded-md text-xs hover:bg-green-700 disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center gap-1.5 font-medium"
           >
-            <Download className="w-4 h-4" />
-            Export to CSV ({filteredExpenses.length})
+            <Download className="w-3.5 h-3.5" />
+            Export ({filteredExpenses.length})
           </button>
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-x-auto">
-        <table className="min-w-full divide-y divide-gray-200">
-          <thead className="bg-gray-50">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 overflow-x-auto">
+        <table className="min-w-full">
+          <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th
                 onClick={() => handleSort('date')}
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
               >
                 <div className="flex items-center gap-1">
                   Date
                   {sortConfig?.key === 'date' && (
-                    <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </div>
               </th>
               <th
                 onClick={() => handleSort('category')}
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
               >
                 <div className="flex items-center gap-1">
                   Category
                   {sortConfig?.key === 'category' && (
-                    <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </div>
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Context</th>
+              <th className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600">Context</th>
               <th
                 onClick={() => handleSort('description')}
-                className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                className="px-4 py-2.5 text-left text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
               >
                 <div className="flex items-center gap-1">
                   Description
                   {sortConfig?.key === 'description' && (
-                    <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </div>
               </th>
               <th
                 onClick={() => handleSort('amount')}
-                className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 select-none"
+                className="px-4 py-2.5 text-right text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 select-none"
               >
                 <div className="flex items-center justify-end gap-1">
                   Amount
                   {sortConfig?.key === 'amount' && (
-                    <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </div>
               </th>
               <th
                 onClick={() => handleSort('payment_method')}
-                className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 transition-colors"
               >
                 <div className="flex items-center justify-center gap-1">
-                  Payment Method
+                  Payment
                   {sortConfig?.key === 'payment_method' && (
-                    <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </div>
               </th>
-              <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Treatment</th>
+              <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Type</th>
               <th
                 onClick={() => handleSort('reconciliation')}
-                className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase cursor-pointer hover:bg-gray-100 transition-colors"
+                className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600 cursor-pointer hover:bg-gray-100 transition-colors"
               >
                 <div className="flex items-center justify-center gap-1">
-                  Bank Recon
+                  Status
                   {sortConfig?.key === 'reconciliation' && (
-                    <span className="text-blue-600">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
+                    <span className="text-blue-600 text-sm">{sortConfig.direction === 'asc' ? '↑' : '↓'}</span>
                   )}
                 </div>
               </th>
-              {canManage && <th className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase">Actions</th>}
+              {canManage && <th className="px-4 py-2.5 text-center text-xs font-semibold text-gray-600">Actions</th>}
             </tr>
           </thead>
-          <tbody className="bg-white divide-y divide-gray-200">
+          <tbody className="divide-y divide-gray-100">
             {loading ? (
               <tr>
                 <td colSpan={canManage ? 9 : 8} className="px-6 py-8 text-center text-gray-500">
@@ -1322,107 +1329,107 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                   : null;
 
                 return (
-                  <tr key={expense.id} className="hover:bg-gray-50">
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <div className="text-sm text-gray-900">
+                  <tr key={expense.id} className="hover:bg-blue-50/50 transition-colors">
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      <div className="text-xs text-gray-900 font-medium">
                         {formatDate(expense.expense_date)}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm font-medium text-gray-900">
+                    <td className="px-4 py-2.5">
+                      <div className="text-xs font-medium text-gray-900">
                         {category?.label || expense.expense_category}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-2.5">
                       {expense.import_container_id && expense.import_containers ? (
-                        <div className="flex items-center gap-2 text-sm">
-                          <Package className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <Package className="w-3.5 h-3.5 text-blue-600 flex-shrink-0" />
                           <span className="text-blue-700 font-medium">
                             {expense.import_containers.container_ref}
                           </span>
                         </div>
                       ) : expense.delivery_challan_id && expense.delivery_challans ? (
-                        <div className="flex items-center gap-2 text-sm">
-                          <Truck className="w-4 h-4 text-green-600 flex-shrink-0" />
+                        <div className="flex items-center gap-1.5 text-xs">
+                          <Truck className="w-3.5 h-3.5 text-green-600 flex-shrink-0" />
                           <span className="text-green-700 font-medium">
                             {expense.delivery_challans.challan_number}
                           </span>
                         </div>
                       ) : category?.requiresContainer ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded">
-                          ⚠️ Missing Context
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-medium text-red-700 bg-red-50 border border-red-200 rounded">
+                          ⚠️ Missing
                         </span>
                       ) : (
-                        <span className="text-gray-400 text-sm italic">No link</span>
+                        <span className="text-gray-400 text-xs">—</span>
                       )}
                     </td>
-                    <td className="px-6 py-4">
-                      <div className="text-sm text-gray-700">{expense.description || '-'}</div>
+                    <td className="px-4 py-2.5">
+                      <div className="text-xs text-gray-700 line-clamp-1">{expense.description || '—'}</div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right">
-                      <div className="text-sm font-medium text-gray-900">
-                        {formatCurrency(expense.amount)}
+                    <td className="px-4 py-2.5 whitespace-nowrap text-right">
+                      <div className="text-xs font-semibold text-gray-900">
+                        Rp {expense.amount.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                       </div>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                    <td className="px-4 py-2.5 whitespace-nowrap text-center">
                       {isReconciled && reconciledBankInfo ? (
-                        <div className="text-sm">
+                        <div className="text-xs">
                           <div className="font-medium text-blue-700">{reconciledBankInfo.bank_name}</div>
-                          <div className="text-xs text-gray-500">{reconciledBankInfo.account_number}</div>
                         </div>
                       ) : expense.bank_account_id && expense.bank_accounts ? (
-                        <div className="text-sm">
+                        <div className="text-xs">
                           <div className="font-medium text-gray-700">{expense.bank_accounts.bank_name}</div>
-                          <div className="text-xs text-gray-500">{expense.bank_accounts.account_number}</div>
                         </div>
                       ) : (
-                        <span className="text-sm text-gray-600 capitalize">{expense.payment_method}</span>
+                        <span className="text-xs text-gray-600">{expense.payment_method.replace('_', ' ')}</span>
                       )}
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
-                      <span className={`inline-flex px-2 py-1 text-xs font-medium rounded border ${getTypeColor(category?.type || 'admin')}`}>
-                        {category?.type === 'import' && 'CAPITALIZED'}
-                        {category?.type === 'sales' && 'EXPENSE'}
-                        {category?.type === 'admin' && 'EXPENSE'}
+                    <td className="px-4 py-2.5 whitespace-nowrap text-center">
+                      <span className={`inline-flex px-1.5 py-0.5 text-[10px] font-bold rounded ${getTypeColor(category?.type || 'admin')}`}>
+                        {category?.type === 'import' && 'CAP'}
+                        {category?.type === 'sales' && 'EXP'}
+                        {category?.type === 'staff' && 'EXP'}
+                        {category?.type === 'operations' && 'EXP'}
+                        {category?.type === 'admin' && 'EXP'}
                       </span>
                     </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-center">
+                    <td className="px-4 py-2.5 whitespace-nowrap text-center">
                       {isReconciled ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-green-700 bg-green-50 border border-green-300 rounded">
-                          ✓ Linked to Bank
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-green-700 bg-green-50 border border-green-300 rounded">
+                          ✓ LINKED
                         </span>
                       ) : (
-                        <span className="inline-flex items-center gap-1 px-2 py-1 text-xs font-medium text-orange-700 bg-orange-50 border border-orange-300 rounded">
-                          ⚠ Not Reconciled
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 text-[10px] font-bold text-orange-700 bg-orange-50 border border-orange-300 rounded">
+                          ⚠ UNLINKED
                         </span>
                       )}
                     </td>
                     {canManage && (
-                      <td className="px-6 py-4 whitespace-nowrap text-center">
-                        <div className="flex items-center justify-center gap-2">
+                      <td className="px-4 py-2.5 whitespace-nowrap text-center">
+                        <div className="flex items-center justify-center gap-1.5">
                           <button
                             onClick={() => {
                               setViewingExpense(expense);
                               setViewModalOpen(true);
                             }}
-                            className="text-purple-600 hover:text-purple-800"
-                            title="View Details"
+                            className="p-1 text-blue-600 hover:bg-blue-50 rounded transition-colors"
+                            title="View"
                           >
-                            <Eye className="w-4 h-4" />
+                            <Eye className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleEdit(expense)}
-                            className="text-blue-600 hover:text-blue-800"
+                            className="p-1 text-green-600 hover:bg-green-50 rounded transition-colors"
                             title="Edit"
                           >
-                            <Edit className="w-4 h-4" />
+                            <Edit className="w-3.5 h-3.5" />
                           </button>
                           <button
                             onClick={() => handleDelete(expense.id)}
-                            className="text-red-600 hover:text-red-800"
+                            className="p-1 text-red-600 hover:bg-red-50 rounded transition-colors"
                             title="Delete"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
                         </div>
                       </td>
@@ -1433,12 +1440,12 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
             )}
             {/* Totals Row */}
             {!loading && sortedExpenses.length > 0 && (
-              <tr className="bg-blue-50 border-t-2 border-blue-200 font-bold">
-                <td colSpan={4} className="px-6 py-3 text-right text-gray-900">
+              <tr className="bg-gradient-to-r from-blue-50 to-blue-100 border-t-2 border-blue-200 font-bold">
+                <td colSpan={4} className="px-4 py-2.5 text-right text-xs text-gray-900">
                   TOTAL ({sortedExpenses.length} expenses):
                 </td>
-                <td className="px-6 py-3 text-right text-gray-900 font-bold">
-                  Rp {sortedExpenses.reduce((sum, exp) => sum + exp.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                <td className="px-4 py-2.5 text-right text-sm text-blue-900 font-bold">
+                  Rp {sortedExpenses.reduce((sum, exp) => sum + exp.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                 </td>
                 <td colSpan={canManage ? 4 : 3}></td>
               </tr>
