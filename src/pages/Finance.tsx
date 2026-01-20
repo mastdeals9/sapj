@@ -27,7 +27,7 @@ import { BankAccountsManager } from '../components/finance/BankAccountsManager';
 import { TaxReports } from '../components/finance/TaxReports';
 
 type FinanceTab =
-  | 'purchase' | 'sales' | 'receipt' | 'payment' | 'journal' | 'contra' | 'expenses' | 'petty_cash'
+  | 'purchase' | 'receipt' | 'payment' | 'journal' | 'contra' | 'expenses' | 'petty_cash'
   | 'ledger' | 'journal_register' | 'bank_ledger' | 'party_ledger' | 'bank_recon'
   | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax'
   | 'coa' | 'customers' | 'suppliers' | 'products' | 'banks';
@@ -49,7 +49,6 @@ const financeMenu: MenuGroup[] = [
     label: 'VOUCHERS',
     items: [
       { id: 'purchase', label: 'Purchase', shortcut: 'F9' },
-      { id: 'sales', label: 'Sales', shortcut: 'F10' },
       { id: 'receipt', label: 'Receipt', shortcut: 'F6' },
       { id: 'payment', label: 'Payment', shortcut: 'F5' },
       { id: 'journal', label: 'Journal', shortcut: 'F7' },
@@ -161,10 +160,6 @@ function FinanceContent() {
     switch (activeTab) {
       case 'purchase':
         return <PurchaseInvoiceManager canManage={canManage} />;
-      case 'sales':
-        // Navigate to main sales page
-        window.location.hash = 'sales';
-        return <div className="p-8 text-center text-gray-500">Redirecting to Sales...</div>;
       case 'receipt':
         return <ReceiptVoucherManager canManage={canManage} />;
       case 'payment':
