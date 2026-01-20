@@ -1088,23 +1088,20 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   return (
     <div className="space-y-4">
       {/* Compact Header with Summary Stats */}
-      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-lg p-2.5 text-white shadow-md">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div>
-              <h2 className="text-lg font-bold mb-1">Expense Tracker</h2>
-              <p className="text-blue-100 text-sm">Import, delivery, and operational costs</p>
-            </div>
-            <div className="flex gap-4 ml-4">
-              <div className="bg-white/20 rounded-lg px-4 py-2">
-                <div className="text-blue-100 text-xs">Total Expenses</div>
-                <div className="text-xl font-bold">
+          <div className="flex items-center gap-3">
+            <h2 className="text-sm font-bold">Expense Tracker</h2>
+            <div className="flex gap-2">
+              <div className="bg-white/20 rounded px-2.5 py-1">
+                <div className="text-blue-100 text-[9px] leading-tight">Total</div>
+                <div className="text-xs font-bold">
                   Rp {filteredExpenses.reduce((sum, exp) => sum + exp.amount, 0).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                 </div>
               </div>
-              <div className="bg-white/20 rounded-lg px-4 py-2">
-                <div className="text-blue-100 text-xs">Reconciled</div>
-                <div className="text-xl font-bold">
+              <div className="bg-white/20 rounded px-2.5 py-1">
+                <div className="text-blue-100 text-[9px] leading-tight">Reconciled</div>
+                <div className="text-xs font-bold">
                   {expenses.filter(e => reconciledExpenseIds.has(e.id)).length} / {expenses.length}
                 </div>
               </div>
@@ -1116,17 +1113,17 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 resetForm();
                 setModalOpen(true);
               }}
-              className="flex items-center gap-2 px-4 py-2 bg-white text-blue-600 rounded-lg hover:bg-blue-50 font-medium transition-all shadow-md"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 bg-white text-blue-600 rounded hover:bg-blue-50 font-medium transition-all shadow-sm text-xs"
             >
-              <Plus className="w-4 h-4" />
-              New Expense
+              <Plus className="w-3.5 h-3.5" />
+              New
             </button>
           )}
         </div>
       </div>
 
       {/* Compact Single-Line Filter Bar */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-2">
         <div className="flex items-center gap-3 flex-wrap">
           {/* Type Filter Pills */}
           <div className="flex gap-1">
@@ -1381,7 +1378,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                           <div className="font-medium text-gray-700">{expense.bank_accounts.bank_name}</div>
                         </div>
                       ) : (
-                        <span className="text-xs text-gray-600">{expense.payment_method.replace('_', ' ')}</span>
+                        <span className="text-xs text-gray-600">{expense.payment_method ? expense.payment_method.replace('_', ' ') : '—'}</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5 whitespace-nowrap text-center">

@@ -1705,47 +1705,45 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
   return (
     <div className="space-y-4">
       {/* Compact Header with Bank Selection and Actions */}
-      <div className="bg-gradient-to-r from-slate-700 to-slate-800 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-gradient-to-r from-slate-700 to-slate-800 rounded-lg p-2.5 text-white shadow-md">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div>
-              <h3 className="text-lg font-bold mb-1">Bank Reconciliation</h3>
-              {selectedAccount && (
-                <p className="text-slate-200 text-sm">
-                  {selectedAccount.bank_name} - {selectedAccount.account_number} ({selectedAccount.currency})
-                </p>
-              )}
-            </div>
-            <div className="flex gap-3">
-              <div className="bg-white/20 rounded-lg px-4 py-2">
-                <div className="text-slate-200 text-xs">Matched</div>
-                <div className="text-xl font-bold text-green-400">{stats.matched}</div>
+          <div className="flex items-center gap-3">
+            <h3 className="text-sm font-bold">Bank Reconciliation</h3>
+            {selectedAccount && (
+              <span className="text-slate-300 text-xs">
+                {selectedAccount.bank_name} - {selectedAccount.account_number}
+              </span>
+            )}
+            <div className="flex gap-2">
+              <div className="bg-white/20 rounded px-2.5 py-1">
+                <div className="text-slate-200 text-[9px] leading-tight">Matched</div>
+                <div className="text-xs font-bold text-green-400">{stats.matched}</div>
               </div>
-              <div className="bg-white/20 rounded-lg px-4 py-2">
-                <div className="text-slate-200 text-xs">Unmatched</div>
-                <div className="text-xl font-bold text-red-400">{stats.unmatched}</div>
+              <div className="bg-white/20 rounded px-2.5 py-1">
+                <div className="text-slate-200 text-[9px] leading-tight">Unmatched</div>
+                <div className="text-xs font-bold text-red-400">{stats.unmatched}</div>
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5">
             <button
               onClick={() => { autoMatchTransactions(); }}
               disabled={!selectedBank}
-              className="flex items-center gap-1.5 px-3 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 font-medium shadow-md"
-              title="Auto-match transactions"
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50 font-medium shadow-sm"
+              title="Auto-match"
             >
-              <RefreshCw className="w-4 h-4" />
-              Auto-Match
+              <RefreshCw className="w-3.5 h-3.5" />
+              Match
             </button>
             {canManage && (
               <>
                 <button
                   onClick={previewClearData}
                   disabled={!selectedBank}
-                  className="p-2 bg-white/20 rounded-lg hover:bg-white/30 disabled:opacity-50"
-                  title="Clear data"
+                  className="p-1.5 bg-white/20 rounded hover:bg-white/30 disabled:opacity-50"
+                  title="Clear"
                 >
-                  <XCircle className="w-4 h-4" />
+                  <XCircle className="w-3.5 h-3.5" />
                 </button>
                 <input
                   ref={fileInputRef}
@@ -1757,11 +1755,11 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
                 <button
                   onClick={() => fileInputRef.current?.click()}
                   disabled={uploading || !selectedBank}
-                  className="flex items-center gap-1.5 px-3 py-2 text-sm bg-white text-slate-700 rounded-lg hover:bg-slate-50 disabled:opacity-50 font-medium shadow-md"
-                  title="Upload statement"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs bg-white text-slate-700 rounded hover:bg-slate-50 disabled:opacity-50 font-medium shadow-sm"
+                  title="Upload"
                 >
-                  <Upload className="w-4 h-4" />
-                  {uploading ? 'Uploading...' : 'Upload'}
+                  <Upload className="w-3.5 h-3.5" />
+                  {uploading ? 'Uploading' : 'Upload'}
                 </button>
               </>
             )}
@@ -1770,7 +1768,7 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
       </div>
 
       {/* Compact Filter Bar */}
-      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-3">
+      <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-2">
         <div className="flex items-center gap-3 flex-wrap">
           {/* Bank Account Selector */}
           <select

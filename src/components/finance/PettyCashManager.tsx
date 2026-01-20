@@ -506,31 +506,29 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
   return (
     <div className="space-y-4">
       {/* Compact Header with Balance and Stats */}
-      <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl p-4 text-white shadow-lg">
+      <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-lg p-2.5 text-white shadow-md">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-6">
-            <div>
-              <div className="flex items-center gap-2 mb-1">
-                <Wallet className="w-5 h-5" />
-                <span className="text-green-100 text-sm font-medium">Petty Cash Balance</span>
-              </div>
-              <div className="text-3xl font-bold">
-                Rp {cashBalance.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
-              </div>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5">
+              <Wallet className="w-4 h-4" />
+              <h2 className="text-sm font-bold">Petty Cash</h2>
             </div>
-            <div className="flex gap-3">
-              <div className="bg-white/20 rounded-lg px-4 py-2">
-                <div className="text-green-100 text-xs">Funds In</div>
-                <div className="text-lg font-bold">
+            <div className="text-base font-bold">
+              Rp {cashBalance.toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+            </div>
+            <div className="flex gap-2">
+              <div className="bg-white/20 rounded px-2.5 py-1">
+                <div className="text-green-100 text-[9px] leading-tight">In</div>
+                <div className="text-xs font-bold">
                   Rp {transactions
                     .filter(t => t.transaction_type === 'withdraw')
                     .reduce((sum, t) => sum + t.amount, 0)
                     .toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
                 </div>
               </div>
-              <div className="bg-white/20 rounded-lg px-4 py-2">
-                <div className="text-green-100 text-xs">Expenses Out</div>
-                <div className="text-lg font-bold">
+              <div className="bg-white/20 rounded px-2.5 py-1">
+                <div className="text-green-100 text-[9px] leading-tight">Out</div>
+                <div className="text-xs font-bold">
                   Rp {transactions
                     .filter(t => t.transaction_type === 'expense')
                     .reduce((sum, t) => sum + t.amount, 0)
@@ -539,22 +537,22 @@ export function PettyCashManager({ canManage, onNavigateToFundTransfer }: PettyC
               </div>
             </div>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-1.5">
             <button
               onClick={handleRefresh}
               disabled={refreshing}
-              className="p-2 bg-white/20 rounded-lg hover:bg-white/30 transition"
+              className="p-1.5 bg-white/20 rounded hover:bg-white/30 transition"
               title="Refresh"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              <RefreshCw className={`w-3.5 h-3.5 ${refreshing ? 'animate-spin' : ''}`} />
             </button>
             {canManage && (
               <button
                 onClick={() => setModalOpen(true)}
-                className="flex items-center gap-2 bg-white text-green-600 px-4 py-2 rounded-lg hover:bg-green-50 font-medium transition shadow-md"
+                className="flex items-center gap-1.5 bg-white text-green-600 px-2.5 py-1.5 rounded hover:bg-green-50 font-medium transition shadow-sm text-xs"
               >
-                <Plus className="w-4 h-4" />
-                New Entry
+                <Plus className="w-3.5 h-3.5" />
+                New
               </button>
             )}
           </div>
