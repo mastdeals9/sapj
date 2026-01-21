@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { Plus, DollarSign, Package, Truck, Building2, CreditCard as Edit, Trash2, FileText, Upload, X, ExternalLink, Download, Eye, Clipboard } from 'lucide-react';
 import { Modal } from '../Modal';
+import { useFinance } from '../../contexts/FinanceContext';
 
 interface FinanceExpense {
   id: string;
@@ -302,18 +303,12 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
   const [uploadingFiles, setUploadingFiles] = useState<File[]>([]);
   const [showPasteHint, setShowPasteHint] = useState(false);
-
-  // Default to 1 month date range
-  const getDefaultStartDate = () => {
-    const date = new Date();
-    date.setMonth(date.getMonth() - 1);
-    return date.toISOString().split('T')[0];
-  };
-  const getDefaultEndDate = () => new Date().toISOString().split('T')[0];
-
-  const [startDate, setStartDate] = useState(getDefaultStartDate());
-  const [endDate, setEndDate] = useState(getDefaultEndDate());
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+
+  // Use master date range from Finance context
+  const { dateRange } = useFinance();
+  const startDate = dateRange.startDate;
+  const endDate = dateRange.endDate;
 
   const [formData, setFormData] = useState({
     expense_category: 'other',
@@ -357,7 +352,7 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
       expenseSubscription.unsubscribe();
       bankStatementSubscription.unsubscribe();
     };
-  }, []);
+  }, [dateRange]);
 
   // Paste handler for images
   useEffect(() => {
@@ -1171,25 +1166,6 @@ export function ExpenseManager({ canManage }: ExpenseManagerProps) {
                 {filter.label}
               </button>
             ))}
-          </div>
-
-          <div className="h-6 w-px bg-gray-300"></div>
-
-          {/* Date Range */}
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
-              className="px-2 py-1 border border-gray-300 rounded-md text-xs"
-            />
-            <span className="text-gray-400 text-xs">→</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(e) => setEndDate(e.target.value)}
-              className="px-2 py-1 border border-gray-300 rounded-md text-xs"
-            />
           </div>
 
           {/* Category Filter */}

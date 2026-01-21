@@ -3,6 +3,7 @@ import { supabase } from '../../lib/supabase';
 import { Upload, RefreshCw, CheckCircle2, AlertCircle, XCircle, Plus, Calendar, Landmark, FileText, Edit } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import { Modal } from '../Modal';
+import { useFinance } from '../../contexts/FinanceContext';
 
 interface BankAccount {
   id: string;
@@ -65,11 +66,14 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [activeFilter, setActiveFilter] = useState<'all' | 'matched' | 'suggested' | 'unmatched'>('unmatched');
-  const [dateRange, setDateRange] = useState({
-    start: new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
-    end: new Date().toISOString().split('T')[0],
-  });
   const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
+
+  // Use master date range from Finance context
+  const { dateRange: financeDateRange } = useFinance();
+  const dateRange = {
+    start: financeDateRange.startDate,
+    end: financeDateRange.endDate,
+  };
   const [recordingLine, setRecordingLine] = useState<StatementLine | null>(null);
   const [recordModal, setRecordModal] = useState(false);
   const [expenses, setExpenses] = useState<any[]>([]);
@@ -308,7 +312,7 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
       setSelectedAccount(account || null);
       loadStatementLines();
     }
-  }, [selectedBank, dateRange]);
+  }, [selectedBank, financeDateRange]);
 
   const loadBankAccounts = async () => {
     try {
@@ -1785,21 +1789,10 @@ export function BankReconciliationEnhanced({ canManage }: BankReconciliationEnha
 
           <div className="h-6 w-px bg-gray-300"></div>
 
-          {/* Date Range */}
-          <div className="flex items-center gap-2">
-            <input
-              type="date"
-              value={dateRange.start}
-              onChange={(e) => setDateRange({ ...dateRange, start: e.target.value })}
-              className="px-2 py-1 border border-gray-300 rounded-md text-xs"
-            />
-            <span className="text-gray-400 text-xs">→</span>
-            <input
-              type="date"
-              value={dateRange.end}
-              onChange={(e) => setDateRange({ ...dateRange, end: e.target.value })}
-              className="px-2 py-1 border border-gray-300 rounded-md text-xs"
-            />
+          {/* Date range controlled by master filter at top */}
+          <div className="flex items-center gap-2 text-xs text-gray-500">
+            <Calendar className="w-3 h-3" />
+            <span>{new Date(dateRange.start).toLocaleDateString('en-GB')} → {new Date(dateRange.end).toLocaleDateString('en-GB')}</span>
           </div>
 
           <div className="h-6 w-px bg-gray-300"></div>
