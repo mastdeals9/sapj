@@ -10,6 +10,7 @@ interface Inquiry {
   quantity: string;
   company_name: string;
   status: string;
+  pipeline_status: string;
   priority: string;
   estimated_value: number | null;
   created_at: string;
@@ -85,31 +86,37 @@ export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps)
     }
   };
 
-  const statusToStageMap: Record<string, string> = {
-    'new': 'New Inquiry',
-    'price_quoted': 'Price Quoted',
-    'coa_pending': 'COA Pending',
-    'sample_sent': 'Sample Sent',
-    'negotiation': 'Negotiation',
-    'po_received': 'PO Received',
-    'won': 'Won',
-    'lost': 'Lost',
-  };
-
   const stageToStatusMap: Record<string, string> = {
+    'New': 'new',
     'New Inquiry': 'new',
-    'Price Quoted': 'price_quoted',
-    'COA Pending': 'coa_pending',
-    'Sample Sent': 'sample_sent',
-    'Negotiation': 'negotiation',
-    'PO Received': 'po_received',
+    'In Progress': 'in_progress',
+    'Price Quoted': 'in_progress',
+    'COA Pending': 'in_progress',
+    'Sample Sent': 'in_progress',
+    'Follow Up': 'follow_up',
+    'Negotiation': 'follow_up',
+    'PO Received': 'follow_up',
     'Won': 'won',
     'Lost': 'lost',
+    'On Hold': 'on_hold',
   };
 
+  const pipelineStageLabels = [
+    { value: 'new', label: 'New' },
+    { value: 'in_progress', label: 'In Progress' },
+    { value: 'follow_up', label: 'Follow Up' },
+    { value: 'won', label: 'Won' },
+    { value: 'lost', label: 'Lost' },
+    { value: 'on_hold', label: 'On Hold' },
+  ];
+
   const getInquiriesForStage = (stageName: string) => {
-    const status = stageToStatusMap[stageName];
-    return inquiries.filter(i => i.status === status);
+    const mappedStatus = stageToStatusMap[stageName];
+    if (mappedStatus) {
+      return inquiries.filter(i => (i.pipeline_status || i.status) === mappedStatus);
+    }
+    const lowerStage = stageName.toLowerCase().replace(/\s+/g, '_');
+    return inquiries.filter(i => (i.pipeline_status || i.status) === lowerStage);
   };
 
   const handleDragStart = (inquiry: Inquiry) => {
@@ -125,8 +132,9 @@ export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps)
   const handleDrop = async (stageName: string) => {
     if (!draggedInquiry || !canManage) return;
 
-    const newStatus = stageToStatusMap[stageName];
-    if (draggedInquiry.status === newStatus) {
+    const newStatus = stageToStatusMap[stageName] || stageName.toLowerCase().replace(/\s+/g, '_');
+    const currentStatus = draggedInquiry.pipeline_status || draggedInquiry.status;
+    if (currentStatus === newStatus) {
       setDraggedInquiry(null);
       return;
     }
@@ -134,7 +142,7 @@ export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps)
     try {
       const { error } = await supabase
         .from('crm_inquiries')
-        .update({ status: newStatus })
+        .update({ pipeline_status: newStatus, status: newStatus })
         .eq('id', draggedInquiry.id);
 
       if (error) throw error;
@@ -210,30 +218,35 @@ export function PipelineBoard({ canManage, onInquiryClick }: PipelineBoardProps)
       </div>
 
       <div className="flex gap-4 overflow-x-auto pb-4">
-        {stages.map((stage) => {
-          const stageInquiries = getInquiriesForStage(stage.stage_name);
+        {pipelineStageLabels.map((stage, idx) => {
+          const stageColors = ['#6B7280', '#3B82F6', '#8B5CF6', '#10B981', '#EF4444', '#F59E0B'];
+          const stageInquiries = getInquiriesForStage(stage.label);
           const stageValue = stageInquiries.reduce((sum, i) => sum + (i.estimated_value || 0), 0);
+          const color = stageColors[idx] || '#6B7280';
 
           return (
             <div
-              key={stage.id}
-              className="flex-shrink-0 w-80 bg-gray-50 rounded-lg"
+              key={stage.value}
+              className="flex-shrink-0 w-72 bg-gray-50 rounded-lg"
               onDragOver={handleDragOver}
-              onDrop={() => handleDrop(stage.stage_name)}
+              onDrop={() => handleDrop(stage.label)}
             >
               <div
-                className="p-4 rounded-t-lg"
-                style={{ backgroundColor: stage.color + '20' }}
+                className="p-3 rounded-t-lg"
+                style={{ backgroundColor: color + '18', borderBottom: `2px solid ${color}40` }}
               >
-                <div className="flex items-center justify-between mb-2">
-                  <h4 className="font-semibold text-gray-900">{stage.stage_name}</h4>
-                  <span className="text-sm font-medium text-gray-600">
+                <div className="flex items-center justify-between mb-1">
+                  <h4 className="font-semibold text-gray-900 text-sm">{stage.label}</h4>
+                  <span
+                    className="text-xs font-bold px-2 py-0.5 rounded-full text-white"
+                    style={{ backgroundColor: color }}
+                  >
                     {stageInquiries.length}
                   </span>
                 </div>
                 {stageValue > 0 && (
-                  <div className="text-xs text-gray-600">
-                    Value: Rp {stageValue.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  <div className="text-xs text-gray-500">
+                    $ {stageValue.toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                 )}
               </div>

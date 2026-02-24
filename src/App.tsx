@@ -1,36 +1,53 @@
-import { useEffect } from 'react';
+import { useEffect, lazy, Suspense } from 'react';
+import { BrowserRouter, useLocation, Navigate } from 'react-router-dom';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { LanguageProvider } from './contexts/LanguageContext';
 import { NavigationProvider, useNavigation } from './contexts/NavigationContext';
+import { FinanceProvider } from './contexts/FinanceContext';
 import { Login } from './components/Login';
 import { ToastContainer } from './components/ToastNotification';
-import { Dashboard } from './pages/Dashboard';
-import { Products } from './pages/Products';
-import { Customers } from './pages/Customers';
-import { Stock } from './pages/Stock';
-import { Batches } from './pages/Batches';
-import { Inventory } from './pages/Inventory';
-import { CRM } from './pages/CRM';
-import { CRMCommandCenter } from './pages/CRMCommandCenter';
-import { Tasks } from './pages/Tasks';
-import { DeliveryChallan } from './pages/DeliveryChallan';
-import { Sales } from './pages/Sales';
-import { Finance } from './pages/Finance';
-import { Settings } from './pages/Settings';
-import { Setup } from './pages/Setup';
-import { GmailCallback } from './pages/GmailCallback';
-import SalesOrders from './pages/SalesOrders';
-import ImportRequirements from './pages/ImportRequirements';
-import ImportContainers from './pages/ImportContainers';
-import MaterialReturns from './pages/MaterialReturns';
-import { CreditNotes } from './pages/CreditNotes';
-import PurchaseOrders from './pages/PurchaseOrders';
+import { ConfirmDialogContainer } from './components/ConfirmDialog';
 import { ApprovalNotifications } from './components/ApprovalNotifications';
 import { initializeNotificationChecks } from './utils/notifications';
+
+const Dashboard = lazy(() => import('./pages/Dashboard').then(m => ({ default: m.Dashboard })));
+const Products = lazy(() => import('./pages/Products').then(m => ({ default: m.Products })));
+const Customers = lazy(() => import('./pages/Customers').then(m => ({ default: m.Customers })));
+const Stock = lazy(() => import('./pages/Stock').then(m => ({ default: m.Stock })));
+const Batches = lazy(() => import('./pages/Batches').then(m => ({ default: m.Batches })));
+const Inventory = lazy(() => import('./pages/Inventory').then(m => ({ default: m.Inventory })));
+const CRM = lazy(() => import('./pages/CRM').then(m => ({ default: m.CRM })));
+const CRMCommandCenter = lazy(() => import('./pages/CRMCommandCenter').then(m => ({ default: m.CRMCommandCenter })));
+const Tasks = lazy(() => import('./pages/Tasks').then(m => ({ default: m.Tasks })));
+const DeliveryChallan = lazy(() => import('./pages/DeliveryChallan').then(m => ({ default: m.DeliveryChallan })));
+const Sales = lazy(() => import('./pages/Sales').then(m => ({ default: m.Sales })));
+const Finance = lazy(() => import('./pages/Finance').then(m => ({ default: m.Finance })));
+const Settings = lazy(() => import('./pages/Settings').then(m => ({ default: m.Settings })));
+const Setup = lazy(() => import('./pages/Setup').then(m => ({ default: m.Setup })));
+const GmailCallback = lazy(() => import('./pages/GmailCallback').then(m => ({ default: m.GmailCallback })));
+const SalesOrders = lazy(() => import('./pages/SalesOrders'));
+const ImportRequirements = lazy(() => import('./pages/ImportRequirements'));
+const ImportContainers = lazy(() => import('./pages/ImportContainers'));
+const MaterialReturns = lazy(() => import('./pages/MaterialReturns'));
+const CreditNotes = lazy(() => import('./pages/CreditNotes').then(m => ({ default: m.CreditNotes })));
+const PurchaseOrders = lazy(() => import('./pages/PurchaseOrders'));
+const SalesTeam = lazy(() => import('./pages/SalesTeam').then(m => ({ default: m.SalesTeam })));
+
+function LoadingFallback() {
+  return (
+    <div className="min-h-screen bg-gray-100 flex items-center justify-center">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto" />
+        <p className="mt-4 text-gray-600">Loading...</p>
+      </div>
+    </div>
+  );
+}
 
 function AppContent() {
   const { user, profile, loading } = useAuth();
   const { currentPage } = useNavigation();
+  const location = useLocation();
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -46,27 +63,32 @@ function AppContent() {
     return cleanup;
   }, [user, profile]);
 
-  if (window.location.pathname === '/setup') {
-    return <Setup />;
+  if (location.pathname === '/setup') {
+    return (
+      <Suspense fallback={<LoadingFallback />}>
+        <Setup />
+      </Suspense>
+    );
   }
 
-  if (window.location.pathname === '/auth/gmail/callback') {
-    return <GmailCallback />;
+  if (location.pathname === '/auth/gmail/callback') {
+    return (
+      <Suspense fallback={<LoadingFallback />}>
+        <GmailCallback />
+      </Suspense>
+    );
   }
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto" />
-          <p className="mt-4 text-gray-600">Loading...</p>
-        </div>
-      </div>
-    );
+    return <LoadingFallback />;
   }
 
   if (!user || !profile) {
     return <Login />;
+  }
+
+  if (location.pathname === '/') {
+    return <Navigate to="/dashboard" replace />;
   }
 
   const renderPage = () => {
@@ -95,6 +117,8 @@ function AppContent() {
         return <CRM />;
       case 'command-center':
         return <CRMCommandCenter />;
+      case 'sales-team':
+        return <SalesTeam />;
       case 'tasks':
         return <Tasks />;
       case 'delivery-challan':
@@ -116,22 +140,29 @@ function AppContent() {
 
   return (
     <>
-      {renderPage()}
+      <Suspense fallback={<LoadingFallback />}>
+        {renderPage()}
+      </Suspense>
       <ApprovalNotifications />
       <ToastContainer />
+      <ConfirmDialogContainer />
     </>
   );
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <LanguageProvider>
-        <NavigationProvider>
-          <AppContent />
-        </NavigationProvider>
-      </LanguageProvider>
-    </AuthProvider>
+    <BrowserRouter>
+      <AuthProvider>
+        <LanguageProvider>
+          <NavigationProvider>
+            <FinanceProvider>
+              <AppContent />
+            </FinanceProvider>
+          </NavigationProvider>
+        </LanguageProvider>
+      </AuthProvider>
+    </BrowserRouter>
   );
 }
 

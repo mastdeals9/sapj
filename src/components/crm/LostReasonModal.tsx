@@ -34,7 +34,7 @@ export function LostReasonModal({
     setSaving(true);
 
     try {
-      const updateData: any = {
+      const updateData: Record<string, unknown> = {
         pipeline_status: 'lost',
         lost_reason: lostReason.trim(),
         lost_at: new Date().toISOString(),

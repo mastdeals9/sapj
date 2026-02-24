@@ -3,6 +3,9 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Plus, Trash2, X, FileText } from 'lucide-react';
+import { SearchableSelect } from './SearchableSelect';
+import { showToast } from './ToastNotification';
+import { showConfirm } from './ConfirmDialog';
 
 interface Customer {
   id: string;
@@ -278,7 +281,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
 
   const removeItem = (index: number) => {
     if (items.length === 1) {
-      alert('At least one item is required');
+      showToast({ type: 'warning', title: 'Warning', message: 'At least one item is required' });
       return;
     }
     console.log('Removing item at index:', index, 'Current items count:', items.length);
@@ -321,7 +324,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
       return publicUrl;
     } catch (error: any) {
       console.error('Error uploading file:', error);
-      alert(`Failed to upload PO file: ${error.message || 'Unknown error'}`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to upload PO file: ${error.message || 'Unknown error'}` });
       throw error;
     }
   };
@@ -330,17 +333,17 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
     e.preventDefault();
 
     if (!formData.customer_id) {
-      alert('Please select a customer');
+      showToast({ type: 'error', title: 'Error', message: 'Please select a customer' });
       return;
     }
 
     if (!formData.customer_po_number.trim()) {
-      alert('Please enter customer PO number');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter customer PO number' });
       return;
     }
 
     if (items.length === 0 || items.some(item => !item.product_id || item.quantity <= 0)) {
-      alert('Please add valid items to the order');
+      showToast({ type: 'error', title: 'Error', message: 'Please add valid items to the order' });
       return;
     }
 
@@ -348,14 +351,11 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
     const wasApproved = existingOrder && ['approved', 'stock_reserved', 'shortage', 'pending_approval'].includes(existingOrder.status);
 
     if (wasApproved && existingOrder) {
-      const confirmed = confirm(
-        '⚠️ Warning: This order has been approved or is awaiting approval.\n\n' +
-        'Editing will:\n' +
-        '• Release existing stock reservations\n' +
-        '• Require re-approval from admin\n' +
-        '• Reset status to "Pending Approval"\n\n' +
-        'Do you want to continue?'
-      );
+      const confirmed = await showConfirm({
+        title: 'Confirm',
+        message: 'Warning: This order has been approved or is awaiting approval.\n\nEditing will:\n- Release existing stock reservations\n- Require re-approval from admin\n- Reset status to "Pending Approval"\n\nDo you want to continue?',
+        variant: 'warning',
+      });
 
       if (!confirmed) return;
     }
@@ -464,7 +464,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
             expected: items.length,
             inserted: insertedItems.length
           });
-          alert(`⚠️ Warning: Expected ${items.length} items but only ${insertedItems.length} were saved. Please verify the order.`);
+          showToast({ type: 'warning', title: 'Warning', message: `Expected ${items.length} items but only ${insertedItems.length} were saved. Please verify the order.` });
         }
 
         const statusMessage = wasApproved
@@ -473,7 +473,7 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
             ? ' and submitted for approval'
             : '';
 
-        alert(`Sales order updated successfully${statusMessage}!`);
+        showToast({ type: 'success', title: 'Success', message: `Sales order updated successfully${statusMessage}!` });
       } else {
         // Create new order
         const { data: soData, error: soError } = await supabase
@@ -519,13 +519,13 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
 
         if (itemsError) throw itemsError;
 
-        alert(`Sales order created successfully${submitForApproval ? ' and submitted for approval' : ''}!`);
+        showToast({ type: 'success', title: 'Success', message: `Sales order created successfully${submitForApproval ? ' and submitted for approval' : ''}!` });
       }
 
       onSuccess();
     } catch (error: any) {
       console.error(existingOrder ? 'Error updating sales order:' : 'Error creating sales order:', error.message);
-      alert((existingOrder ? 'Failed to update sales order: ' : 'Failed to create sales order: ') + error.message);
+      showToast({ type: 'error', title: 'Error', message: (existingOrder ? 'Failed to update sales order: ' : 'Failed to create sales order: ') + error.message });
     } finally {
       setLoading(false);
     }
@@ -559,19 +559,12 @@ export default function SalesOrderForm({ existingOrder, onSuccess, onCancel }: S
       <div className="grid grid-cols-2 gap-4">
         <div>
           <label className="block text-sm font-medium text-gray-700 mb-1">{t('sales.customer')} *</label>
-          <select
+          <SearchableSelect
             value={formData.customer_id}
-            onChange={(e) => setFormData({ ...formData, customer_id: e.target.value })}
-            className="w-full border rounded-lg px-3 py-2"
-            required
-          >
-            <option value="">{t('common.filter')} {t('sales.customer')}</option>
-            {customers.map(customer => (
-              <option key={customer.id} value={customer.id}>
-                {customer.company_name}
-              </option>
-            ))}
-          </select>
+            onChange={(val) => setFormData({ ...formData, customer_id: val })}
+            options={customers.map(c => ({ value: c.id, label: c.company_name }))}
+            placeholder={`${t('common.filter')} ${t('sales.customer')}`}
+          />
         </div>
 
         <div>

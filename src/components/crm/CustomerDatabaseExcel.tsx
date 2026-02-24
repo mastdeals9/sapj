@@ -1,8 +1,15 @@
 import { useState, useEffect, useRef } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Download, Upload, Trash2, Send, Search } from 'lucide-react';
+import { Plus, Download, Upload, Trash2, Send, Search, UserCheck } from 'lucide-react';
 import { Modal } from '../Modal';
 import { BulkEmailComposer } from './BulkEmailComposer';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
+
+interface SalesMember {
+  id: string;
+  name: string;
+}
 
 interface Customer {
   id: string;
@@ -21,6 +28,7 @@ interface Customer {
   notes: string | null;
   is_active: boolean;
   created_at: string;
+  assigned_sales?: string | null;
 }
 
 interface EditingCell {
@@ -40,6 +48,7 @@ export function CustomerDatabaseExcel() {
   const [cityFilter, setCityFilter] = useState('');
   const [customerTypeFilter, setCustomerTypeFilter] = useState('');
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({
+    assigned_sales: 130,
     created_at: 110,
     company_name: 200,
     contact_person: 150,
@@ -56,10 +65,14 @@ export function CustomerDatabaseExcel() {
     notes: 200,
   });
   const [resizing, setResizing] = useState<{ column: string; startX: number; startWidth: number } | null>(null);
+  const [salesMembers, setSalesMembers] = useState<SalesMember[]>([]);
+  const [assignModal, setAssignModal] = useState<{ contactId: string; contactName: string } | null>(null);
+  const [selectedSalesMember, setSelectedSalesMember] = useState('');
   const tableRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     loadCustomers();
+    loadSalesMembers();
   }, []);
 
   useEffect(() => {
@@ -86,18 +99,64 @@ export function CustomerDatabaseExcel() {
 
   const loadCustomers = async () => {
     try {
-      const { data, error } = await supabase
-        .from('crm_contacts')
-        .select('*')
-        .order('company_name');
+      const [contactsRes, assignmentsRes] = await Promise.all([
+        supabase.from('crm_contacts').select('*').order('company_name'),
+        supabase.from('customer_assignments')
+          .select('crm_contact_id, sales_team_members(name)')
+          .eq('is_active', true)
+          .not('crm_contact_id', 'is', null),
+      ]);
 
-      if (error) throw error;
-      setCustomers(data || []);
-      setFilteredCustomers(data || []);
+      if (contactsRes.error) throw contactsRes.error;
+
+      const assignmentMap: Record<string, string> = {};
+      (assignmentsRes.data || []).forEach((a: any) => {
+        if (a.crm_contact_id && a.sales_team_members?.name) {
+          const existing = assignmentMap[a.crm_contact_id];
+          assignmentMap[a.crm_contact_id] = existing
+            ? `${existing}, ${a.sales_team_members.name}`
+            : a.sales_team_members.name;
+        }
+      });
+
+      const enriched = (contactsRes.data || []).map((c: any) => ({
+        ...c,
+        assigned_sales: assignmentMap[c.id] || null,
+      }));
+
+      setCustomers(enriched);
+      setFilteredCustomers(enriched);
     } catch (error) {
       console.error('Error loading customers:', error);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const loadSalesMembers = async () => {
+    const { data } = await supabase
+      .from('sales_team_members')
+      .select('id, name')
+      .eq('is_active', true)
+      .order('name');
+    setSalesMembers(data || []);
+  };
+
+  const handleAssignSalesMember = async () => {
+    if (!assignModal || !selectedSalesMember) return;
+    try {
+      const { error } = await supabase.from('customer_assignments').upsert({
+        crm_contact_id: assignModal.contactId,
+        sales_member_id: selectedSalesMember,
+        is_active: true,
+      }, { onConflict: 'crm_contact_id,sales_member_id' });
+      if (error) throw error;
+      showToast({ type: 'success', title: 'Assigned', message: 'Salesperson assigned successfully' });
+      setAssignModal(null);
+      setSelectedSalesMember('');
+      loadCustomers();
+    } catch (err: any) {
+      showToast({ type: 'error', title: 'Error', message: err.message });
     }
   };
 
@@ -153,7 +212,7 @@ export function CustomerDatabaseExcel() {
       );
     } catch (error) {
       console.error('Error updating customer:', error);
-      alert('Failed to update customer');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update customer' });
     } finally {
       setEditingCell(null);
       setEditValue('');
@@ -189,13 +248,13 @@ export function CustomerDatabaseExcel() {
       setCustomers(prev => [data, ...prev]);
     } catch (error) {
       console.error('Error adding customer:', error);
-      alert('Failed to add customer');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to add customer' });
     }
   };
 
   const handleDeleteSelected = async () => {
     if (selectedRows.size === 0) return;
-    if (!confirm(`Delete ${selectedRows.size} customer(s)?`)) return;
+    if (!await showConfirm({ title: 'Confirm', message: `Delete ${selectedRows.size} customer(s)?`, variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -208,7 +267,7 @@ export function CustomerDatabaseExcel() {
       setSelectedRows(new Set());
     } catch (error) {
       console.error('Error deleting customers:', error);
-      alert('Failed to delete customers');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete customers' });
     }
   };
 
@@ -280,7 +339,7 @@ export function CustomerDatabaseExcel() {
       const lines = text.split('\n').filter(line => line.trim());
 
       if (lines.length < 2) {
-        alert('CSV file is empty or invalid');
+        showToast({ type: 'error', title: 'Error', message: 'CSV file is empty or invalid' });
         return;
       }
 
@@ -303,7 +362,7 @@ export function CustomerDatabaseExcel() {
       const notesIndex = headers.findIndex(h => h.toLowerCase() === 'notes');
 
       if (companyNameIndex === -1) {
-        alert('CSV must have a "Company Name" column');
+        showToast({ type: 'error', title: 'Error', message: 'CSV must have a "Company Name" column' });
         return;
       }
 
@@ -381,7 +440,7 @@ export function CustomerDatabaseExcel() {
       }).filter(Boolean);
 
       if (customersToInsert.length === 0) {
-        alert('No valid customer data found in CSV');
+        showToast({ type: 'error', title: 'Error', message: 'No valid customer data found in CSV' });
         return;
       }
 
@@ -392,11 +451,11 @@ export function CustomerDatabaseExcel() {
 
       if (error) throw error;
 
-      alert(`Successfully imported ${customersToInsert.length} customer(s)`);
+      showToast({ type: 'success', title: 'Success', message: `Successfully imported ${customersToInsert.length} customer(s)` });
       loadCustomers();
     } catch (error) {
       console.error('Error importing CSV:', error);
-      alert('Failed to import CSV. Please check the file format.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to import CSV. Please check the file format.' });
     }
 
     e.target.value = '';
@@ -468,7 +527,7 @@ export function CustomerDatabaseExcel() {
       .filter((c): c is Customer => !!c && !!c.email);
 
     if (contactsWithEmail.length === 0) {
-      alert('Please select customers with email addresses');
+      showToast({ type: 'warning', title: 'Warning', message: 'Please select customers with email addresses' });
       return;
     }
 
@@ -605,6 +664,7 @@ export function CustomerDatabaseExcel() {
                 />
               </th>
               {[
+                { key: 'assigned_sales', label: 'Sales Person' },
                 { key: 'created_at', label: 'Date' },
                 { key: 'company_name', label: 'Company Name' },
                 { key: 'contact_person', label: 'Contact Person' },
@@ -650,6 +710,23 @@ export function CustomerDatabaseExcel() {
                     onChange={() => toggleRowSelection(customer.id)}
                     className="rounded"
                   />
+                </td>
+                <td
+                  className="border border-gray-300 h-8 px-2 py-1 cursor-pointer hover:bg-blue-50 group"
+                  style={{ width: columnWidths.assigned_sales }}
+                  onClick={() => { setAssignModal({ contactId: customer.id, contactName: customer.company_name }); setSelectedSalesMember(''); }}
+                  title="Click to assign salesperson"
+                >
+                  {customer.assigned_sales ? (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 bg-blue-50 text-blue-700 rounded-full text-xs font-medium">
+                      {customer.assigned_sales}
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-gray-400 text-xs group-hover:text-blue-500">
+                      <UserCheck className="w-3 h-3" />
+                      Assign
+                    </span>
+                  )}
                 </td>
                 <td className="border border-gray-300 h-8" style={{ width: columnWidths.created_at }}>
                   {renderCell(customer, 'created_at')}
@@ -732,6 +809,40 @@ export function CustomerDatabaseExcel() {
           }}
         />
       </Modal>
+
+      {assignModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full">
+            <h3 className="text-base font-semibold text-gray-900 mb-1">Assign Salesperson</h3>
+            <p className="text-sm text-gray-500 mb-4">{assignModal.contactName}</p>
+            <select
+              value={selectedSalesMember}
+              onChange={e => setSelectedSalesMember(e.target.value)}
+              className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 mb-4"
+            >
+              <option value="">Select salesperson...</option>
+              {salesMembers.map(m => (
+                <option key={m.id} value={m.id}>{m.name}</option>
+              ))}
+            </select>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setAssignModal(null)}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleAssignSalesMember}
+                disabled={!selectedSalesMember}
+                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                Assign
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

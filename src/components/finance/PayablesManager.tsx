@@ -4,6 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { DataTable } from '../DataTable';
 import { Modal } from '../Modal';
 import { Plus, Edit, Trash2, FileText, DollarSign, Calendar, AlertCircle } from 'lucide-react';
+import { formatDate } from '../../utils/dateFormat';
 
 interface VendorBill {
   id: string;
@@ -38,6 +39,7 @@ interface VendorPayment {
   bank_accounts?: {
     account_name: string;
     bank_name: string;
+    alias: string | null;
   } | null;
 }
 
@@ -45,6 +47,7 @@ interface BankAccount {
   id: string;
   account_name: string;
   bank_name: string;
+  alias: string | null;
 }
 
 interface PayablesManagerProps {
@@ -121,7 +124,8 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
           ),
           bank_accounts (
             account_name,
-            bank_name
+            bank_name,
+            alias
           )
         `)
         .order('payment_date', { ascending: false });
@@ -137,7 +141,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
     try {
       const { data, error } = await supabase
         .from('bank_accounts')
-        .select('id, account_name, bank_name')
+        .select('id, account_name, bank_name, alias')
         .eq('is_active', true)
         .order('account_name');
 
@@ -448,7 +452,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
     {
       key: 'bill_date',
       label: 'Bill Date',
-      render: (bill: VendorBill) => new Date(bill.bill_date).toLocaleDateString()
+      render: (bill: VendorBill) => formatDate(bill.bill_date)
     },
     {
       key: 'due_date',
@@ -459,7 +463,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
         const isOverdue = dueDate < new Date() && bill.payment_status !== 'paid';
         return (
           <span className={isOverdue ? 'text-red-600 font-medium' : ''}>
-            {dueDate.toLocaleDateString()}
+            {formatDate(bill.due_date)}
             {isOverdue && <AlertCircle className="w-3 h-3 inline ml-1" />}
           </span>
         );
@@ -511,7 +515,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
     {
       key: 'payment_date',
       label: 'Payment Date',
-      render: (payment: VendorPayment) => new Date(payment.payment_date).toLocaleDateString()
+      render: (payment: VendorPayment) => formatDate(payment.payment_date)
     },
     {
       key: 'amount',
@@ -532,7 +536,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
       label: 'Bank Account',
       render: (payment: VendorPayment) =>
         payment.bank_accounts
-          ? `${payment.bank_accounts.account_name} - ${payment.bank_accounts.bank_name}`
+          ? (payment.bank_accounts.alias || `${payment.bank_accounts.account_name} - ${payment.bank_accounts.bank_name}`)
           : 'N/A'
     },
   ];
@@ -920,7 +924,7 @@ export function PayablesManager({ canManage }: PayablesManagerProps) {
                 <option value="">Select bank account</option>
                 {bankAccounts.map((account) => (
                   <option key={account.id} value={account.id}>
-                    {account.account_name} - {account.bank_name}
+                    {account.alias || `${account.account_name} - ${account.bank_name}`}
                   </option>
                 ))}
               </select>

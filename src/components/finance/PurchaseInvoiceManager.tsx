@@ -1,8 +1,12 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Plus, Edit, Trash2, Search, FileText, Eye, X, Upload, DollarSign } from 'lucide-react';
+import { Plus, Edit, Trash2, Search, FileText, Eye, X, AlertCircle, CreditCard } from 'lucide-react';
+import { showConfirm } from '../ConfirmDialog';
 import { Modal } from '../Modal';
+import { SearchableSelect } from '../SearchableSelect';
 import { FileUpload } from '../FileUpload';
+import { showToast } from '../ToastNotification';
+import { formatDate } from '../../utils/dateFormat';
 
 interface Supplier {
   id: string;
@@ -18,15 +22,14 @@ interface Supplier {
 interface Product {
   id: string;
   product_name: string;
-  generic_name: string | null;
   unit: string;
   current_stock: number;
 }
 
 interface ChartOfAccount {
   id: string;
-  account_code: string;
-  account_name: string;
+  code: string;
+  name: string;
   account_type: string;
 }
 
@@ -42,6 +45,7 @@ interface PurchaseInvoiceItem {
   line_total: number;
   expense_account_id: string | null;
   asset_account_id: string | null;
+  tax_percent: number;
   tax_amount: number;
 }
 
@@ -70,9 +74,10 @@ interface PurchaseInvoice {
 
 interface PurchaseInvoiceManagerProps {
   canManage: boolean;
+  onPayInvoice?: (invoice: { id: string; invoice_number: string; supplier_id: string; balance_amount: number }) => void;
 }
 
-export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProps) {
+export function PurchaseInvoiceManager({ canManage, onPayInvoice }: PurchaseInvoiceManagerProps) {
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -81,8 +86,14 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
   const [modalOpen, setModalOpen] = useState(false);
   const [viewModal, setViewModal] = useState(false);
   const [selectedInvoice, setSelectedInvoice] = useState<PurchaseInvoice | null>(null);
+  const [viewLineItems, setViewLineItems] = useState<PurchaseInvoiceItem[]>([]);
+  const [viewLoading, setViewLoading] = useState(false);
+  const [viewBlobUrl, setViewBlobUrl] = useState<string | null>(null);
+  const [viewBlobLoading, setViewBlobLoading] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [uploading, setUploading] = useState(false);
+  const [editingInvoice, setEditingInvoice] = useState<PurchaseInvoice | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [formData, setFormData] = useState({
     invoice_number: '',
@@ -107,6 +118,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
       line_total: 0,
       expense_account_id: null,
       asset_account_id: null,
+      tax_percent: 0,
       tax_amount: 0,
     },
   ]);
@@ -145,7 +157,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
   const loadProducts = async () => {
     const { data } = await supabase
       .from('products')
-      .select('id, product_name, generic_name, unit, current_stock')
+      .select('id, product_name, unit, current_stock')
       .order('product_name');
     setProducts(data || []);
   };
@@ -153,10 +165,66 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
   const loadAccounts = async () => {
     const { data } = await supabase
       .from('chart_of_accounts')
-      .select('id, account_code, account_name, account_type')
-      .in('account_type', ['Expense', 'Asset', 'Cost of Goods Sold'])
-      .order('account_code');
+      .select('id, code, name, account_type')
+      .in('account_type', ['Expense', 'Asset', 'Cost of Goods Sold', 'expense', 'asset', 'cost_of_goods_sold'])
+      .order('code');
     setAccounts(data || []);
+  };
+
+  const loadViewLineItems = async (invoiceId: string) => {
+    setViewLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('purchase_invoice_items')
+        .select('*, products(product_name, unit)')
+        .eq('purchase_invoice_id', invoiceId)
+        .order('created_at');
+      if (error) throw error;
+      const items = (data || []).map((item: any) => ({
+        ...item,
+        product_name: item.products?.product_name || null,
+      }));
+      setViewLineItems(items);
+    } catch (err) {
+      console.error('Error loading line items:', err);
+      setViewLineItems([]);
+    } finally {
+      setViewLoading(false);
+    }
+  };
+
+  const handleOpenView = async (invoice: PurchaseInvoice) => {
+    setSelectedInvoice(invoice);
+    setViewModal(true);
+    setViewBlobUrl(null);
+    await loadViewLineItems(invoice.id);
+    if (invoice.document_urls && invoice.document_urls.length > 0) {
+      setViewBlobLoading(true);
+      try {
+        const url = invoice.document_urls[0];
+
+        // For Supabase Storage URLs, use them directly
+        if (url.includes('supabase.co/storage/v1/object/public/')) {
+          // Just set the URL directly - the PDF viewer will handle it
+          setViewBlobUrl(url);
+        } else {
+          // For other URLs, try to fetch as blob
+          const res = await fetch(url);
+          if (res.ok) {
+            const blob = await res.blob();
+            setViewBlobUrl(URL.createObjectURL(blob));
+          } else {
+            console.error('Failed to fetch PDF:', res.status, res.statusText);
+            setViewBlobUrl(null);
+          }
+        }
+      } catch (err) {
+        console.error('Error loading PDF:', err);
+        setViewBlobUrl(null);
+      } finally {
+        setViewBlobLoading(false);
+      }
+    }
   };
 
   const selectedSupplier = suppliers.find(s => s.id === formData.supplier_id);
@@ -174,6 +242,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
         line_total: 0,
         expense_account_id: null,
         asset_account_id: null,
+        tax_percent: 0,
         tax_amount: 0,
       },
     ]);
@@ -189,9 +258,11 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
     const newLines = [...lineItems];
     newLines[index] = { ...newLines[index], [field]: value };
 
-    // Auto-calculate line total
-    if (field === 'quantity' || field === 'unit_price') {
-      newLines[index].line_total = newLines[index].quantity * newLines[index].unit_price;
+    // Auto-calculate line total and tax amount
+    if (field === 'quantity' || field === 'unit_price' || field === 'tax_percent') {
+      const subtotal = newLines[index].quantity * newLines[index].unit_price;
+      newLines[index].line_total = subtotal;
+      newLines[index].tax_amount = subtotal * (newLines[index].tax_percent / 100);
     }
 
     // If item_type changes, clear product/account selections
@@ -223,27 +294,110 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
     return { subtotal, taxTotal, total };
   };
 
+  const handleOpenEdit = async (invoice: PurchaseInvoice) => {
+    setEditingInvoice(invoice);
+    setFormData({
+      invoice_number: invoice.invoice_number,
+      supplier_id: invoice.supplier_id,
+      invoice_date: invoice.invoice_date,
+      due_date: invoice.due_date || '',
+      currency: invoice.currency,
+      exchange_rate: invoice.exchange_rate,
+      faktur_pajak_number: invoice.faktur_pajak_number || '',
+      notes: invoice.notes || '',
+      document_urls: invoice.document_urls || [],
+    });
+
+    const { data } = await supabase
+      .from('purchase_invoice_items')
+      .select('*')
+      .eq('purchase_invoice_id', invoice.id)
+      .order('created_at');
+
+    const items = (data || []).map((item: any) => ({
+      id: item.id,
+      item_type: item.item_type,
+      product_id: item.product_id,
+      description: item.description,
+      quantity: item.quantity,
+      unit: item.unit,
+      unit_price: item.unit_price,
+      line_total: item.line_total,
+      expense_account_id: item.expense_account_id,
+      asset_account_id: item.asset_account_id,
+      tax_percent: item.line_total > 0 ? Math.round((item.tax_amount / item.line_total) * 1000) / 10 : 0,
+      tax_amount: item.tax_amount,
+    }));
+
+    setLineItems(items.length > 0 ? items : [{
+      item_type: 'inventory' as const,
+      product_id: null,
+      description: '',
+      quantity: 1,
+      unit: 'pcs',
+      unit_price: 0,
+      line_total: 0,
+      expense_account_id: null,
+      asset_account_id: null,
+      tax_percent: 0,
+      tax_amount: 0,
+    }]);
+    setModalOpen(true);
+  };
+
+  const handleDelete = async (invoice: PurchaseInvoice) => {
+    const confirmed = await showConfirm({
+      title: 'Delete Purchase Invoice',
+      message: `Are you sure you want to delete invoice "${invoice.invoice_number}"? This action cannot be undone.`,
+      confirmLabel: 'Delete',
+      variant: 'danger',
+    });
+    if (!confirmed) return;
+
+    setDeleting(true);
+    try {
+      const { error: itemsErr } = await supabase
+        .from('purchase_invoice_items')
+        .delete()
+        .eq('purchase_invoice_id', invoice.id);
+      if (itemsErr) throw itemsErr;
+
+      const { error } = await supabase
+        .from('purchase_invoices')
+        .delete()
+        .eq('id', invoice.id);
+      if (error) throw error;
+
+      showToast({ type: 'success', title: 'Deleted', message: 'Purchase invoice deleted successfully.' });
+      loadInvoices();
+    } catch (error: any) {
+      showToast({ type: 'error', title: 'Error', message: `Error: ${error.message}` });
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!canManage) {
-      alert('You do not have permission to create purchase invoices');
+      showToast({ type: 'error', title: 'Error', message: 'You do not have permission to manage purchase invoices' });
       return;
     }
 
     if (!formData.supplier_id) {
-      alert('Please select a supplier');
+      showToast({ type: 'error', title: 'Error', message: 'Please select a supplier' });
       return;
     }
 
     if (lineItems.length === 0 || lineItems.every(item => item.line_total === 0)) {
-      alert('Please add at least one line item');
+      showToast({ type: 'error', title: 'Error', message: 'Please add at least one line item' });
       return;
     }
 
     // Validate exchange rate for USD
     if (formData.currency === 'USD' && formData.exchange_rate <= 1) {
-      alert('Please enter a valid exchange rate for USD');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter a valid exchange rate for USD' });
       return;
     }
 
@@ -251,19 +405,19 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
     for (let i = 0; i < lineItems.length; i++) {
       const item = lineItems[i];
       if (item.item_type === 'inventory' && !item.product_id) {
-        alert(`Line ${i + 1}: Please select a product for inventory items`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please select a product for inventory items` });
         return;
       }
       if (item.item_type === 'expense' && !item.expense_account_id) {
-        alert(`Line ${i + 1}: Please select an expense account`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please select an expense account` });
         return;
       }
       if (item.item_type === 'fixed_asset' && !item.asset_account_id) {
-        alert(`Line ${i + 1}: Please select an asset account`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please select an asset account` });
         return;
       }
       if (!item.description.trim()) {
-        alert(`Line ${i + 1}: Please enter a description`);
+        showToast({ type: 'error', title: 'Error', message: `Line ${i + 1}: Please enter a description` });
         return;
       }
     }
@@ -283,27 +437,13 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
         subtotal: totals.subtotal,
         tax_amount: totals.taxTotal,
         total_amount: totals.total,
-        paid_amount: 0,
-        balance_amount: totals.total,
-        status: 'unpaid',
         faktur_pajak_number: formData.faktur_pajak_number.trim() || null,
         notes: formData.notes.trim() || null,
         document_urls: formData.document_urls,
         requires_faktur_pajak: selectedSupplier?.pkp_status || false,
-        created_by: userData.user?.id,
       };
 
-      const { data: invoice, error: invoiceError } = await supabase
-        .from('purchase_invoices')
-        .insert([invoiceData])
-        .select()
-        .single();
-
-      if (invoiceError) throw invoiceError;
-
-      // Insert line items
       const itemsData = lineItems.map(item => ({
-        purchase_invoice_id: invoice.id,
         item_type: item.item_type,
         product_id: item.product_id,
         description: item.description,
@@ -316,19 +456,43 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
         asset_account_id: item.asset_account_id,
       }));
 
-      const { error: itemsError } = await supabase
-        .from('purchase_invoice_items')
-        .insert(itemsData);
+      if (editingInvoice) {
+        const { error: updateError } = await supabase
+          .from('purchase_invoices')
+          .update(invoiceData)
+          .eq('id', editingInvoice.id);
+        if (updateError) throw updateError;
 
-      if (itemsError) throw itemsError;
+        await supabase.from('purchase_invoice_items').delete().eq('purchase_invoice_id', editingInvoice.id);
+        const { error: itemsError } = await supabase
+          .from('purchase_invoice_items')
+          .insert(itemsData.map(item => ({ ...item, purchase_invoice_id: editingInvoice.id })));
+        if (itemsError) throw itemsError;
 
-      alert('Purchase invoice created successfully!');
+        showToast({ type: 'success', title: 'Updated', message: 'Purchase invoice updated successfully!' });
+      } else {
+        const { data: invoice, error: invoiceError } = await supabase
+          .from('purchase_invoices')
+          .insert([{ ...invoiceData, paid_amount: 0, status: 'unpaid', created_by: userData.user?.id }])
+          .select()
+          .single();
+        if (invoiceError) throw invoiceError;
+
+        const { error: itemsError } = await supabase
+          .from('purchase_invoice_items')
+          .insert(itemsData.map(item => ({ ...item, purchase_invoice_id: invoice.id })));
+        if (itemsError) throw itemsError;
+
+        showToast({ type: 'success', title: 'Success', message: 'Purchase invoice created successfully!' });
+      }
+
       resetForm();
+      setEditingInvoice(null);
       setModalOpen(false);
       loadInvoices();
     } catch (error: any) {
-      console.error('Error creating purchase invoice:', error);
-      alert(`Error: ${error.message}`);
+      console.error('Error saving purchase invoice:', error);
+      showToast({ type: 'error', title: 'Error', message: `Error: ${error.message}` });
     }
   };
 
@@ -361,7 +525,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
       }));
     } catch (error: any) {
       console.error('Error uploading files:', error);
-      alert(`Error uploading files: ${error.message}`);
+      showToast({ type: 'error', title: 'Error', message: `Error uploading files: ${error.message}` });
     } finally {
       setUploading(false);
     }
@@ -397,6 +561,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
         line_total: 0,
         expense_account_id: null,
         asset_account_id: null,
+        tax_percent: 0,
         tax_amount: 0,
       },
     ]);
@@ -414,19 +579,20 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
   }
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h2 className="text-2xl font-bold text-gray-900">Purchase Invoices</h2>
+    <div className="space-y-4 sm:space-y-6">
+      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+        <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Purchase Invoices</h2>
         {canManage && (
           <button
             onClick={() => {
               resetForm();
               setModalOpen(true);
             }}
-            className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+            className="inline-flex items-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 text-sm sm:text-base whitespace-nowrap"
           >
             <Plus className="w-4 h-4" />
-            New Purchase Invoice
+            <span className="hidden sm:inline">New Purchase Invoice</span>
+            <span className="sm:hidden">New Invoice</span>
           </button>
         )}
       </div>
@@ -444,32 +610,32 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
         </div>
       </div>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="bg-white rounded-lg shadow overflow-x-auto">
         <table className="min-w-full divide-y divide-gray-200">
           <thead className="bg-gray-50">
             <tr>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Invoice #
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden md:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Supplier
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden lg:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Date
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden sm:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider whitespace-nowrap">
                 Currency
               </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 sm:px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Total
               </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden xl:table-cell px-3 sm:px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Balance
               </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="hidden lg:table-cell px-3 sm:px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Status
               </th>
-              <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+              <th className="px-3 sm:px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider sticky right-0 bg-gray-50">
                 Actions
               </th>
             </tr>
@@ -484,32 +650,44 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
             ) : (
               filteredInvoices.map((invoice) => (
                 <tr key={invoice.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {invoice.invoice_number}
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                    <div className="flex flex-col">
+                      <span>{invoice.invoice_number}</span>
+                      <span className="md:hidden text-xs text-gray-500">{invoice.suppliers?.company_name}</span>
+                    </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="hidden md:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                     {invoice.suppliers?.company_name}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(invoice.invoice_date).toLocaleDateString()}
+                  <td className="hidden lg:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {formatDate(invoice.invoice_date)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {invoice.currency}
-                    {invoice.currency === 'USD' && (
-                      <span className="text-xs text-gray-400 ml-1">
-                        @ {invoice.exchange_rate.toLocaleString()}
+                  <td className="hidden sm:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    <div className="flex flex-col">
+                      <span>{invoice.currency}</span>
+                      {invoice.currency === 'USD' && (
+                        <span className="text-xs text-gray-400">
+                          @ {invoice.exchange_rate.toLocaleString()}
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 font-medium">
+                    <div className="flex flex-col items-end">
+                      <span>{invoice.currency} {invoice.total_amount.toLocaleString()}</span>
+                      <span className="lg:hidden text-xs">
+                        <span className={invoice.balance_amount > 0 ? 'text-red-600' : 'text-green-600'}>
+                          Bal: {invoice.balance_amount.toLocaleString()}
+                        </span>
                       </span>
-                    )}
+                    </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right text-gray-900 font-medium">
-                    {invoice.currency} {invoice.total_amount.toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-right font-medium">
+                  <td className="hidden xl:table-cell px-3 sm:px-6 py-4 whitespace-nowrap text-sm text-right font-medium">
                     <span className={invoice.balance_amount > 0 ? 'text-red-600' : 'text-green-600'}>
                       {invoice.currency} {invoice.balance_amount.toLocaleString()}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
+                  <td className="hidden lg:table-cell px-3 sm:px-6 py-4 whitespace-nowrap">
                     <span className={`px-2 py-1 text-xs font-semibold rounded-full ${
                       invoice.status === 'paid'
                         ? 'bg-green-100 text-green-800'
@@ -520,17 +698,44 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
                       {invoice.status}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <button
-                      onClick={() => {
-                        setSelectedInvoice(invoice);
-                        setViewModal(true);
-                      }}
-                      className="text-blue-600 hover:text-blue-900 mr-3"
-                      title="View Details"
-                    >
-                      <Eye className="w-4 h-4" />
-                    </button>
+                  <td className="px-3 sm:px-6 py-4 whitespace-nowrap text-right text-sm font-medium sticky right-0 bg-white">
+                    <div className="flex items-center justify-end gap-2">
+                      <button
+                        onClick={() => handleOpenView(invoice)}
+                        className="text-blue-600 hover:text-blue-900"
+                        title="View Details"
+                      >
+                        <Eye className="w-4 h-4" />
+                      </button>
+                      {canManage && onPayInvoice && invoice.status !== 'paid' && invoice.balance_amount > 0 && (
+                        <button
+                          onClick={() => onPayInvoice({ id: invoice.id, invoice_number: invoice.invoice_number, supplier_id: invoice.supplier_id, balance_amount: invoice.balance_amount })}
+                          className="text-green-600 hover:text-green-800"
+                          title="Record Payment"
+                        >
+                          <CreditCard className="w-4 h-4" />
+                        </button>
+                      )}
+                      {canManage && (
+                        <>
+                          <button
+                            onClick={() => handleOpenEdit(invoice)}
+                            className="text-gray-500 hover:text-gray-800"
+                            title="Edit"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDelete(invoice)}
+                            disabled={deleting}
+                            className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                            title="Delete"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -544,9 +749,10 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
         isOpen={modalOpen}
         onClose={() => {
           setModalOpen(false);
+          setEditingInvoice(null);
           resetForm();
         }}
-        title="New Purchase Invoice"
+        title={editingInvoice ? `Edit Invoice: ${editingInvoice.invoice_number}` : 'New Purchase Invoice'}
       >
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Header Section */}
@@ -555,19 +761,12 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
               <label className="block text-sm font-medium text-gray-700 mb-1">
                 Supplier *
               </label>
-              <select
+              <SearchableSelect
                 value={formData.supplier_id}
-                onChange={(e) => setFormData({ ...formData, supplier_id: e.target.value })}
-                required
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-              >
-                <option value="">Select Supplier</option>
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.company_name} {supplier.pkp_status && '(PKP)'}
-                  </option>
-                ))}
-              </select>
+                onChange={(val) => setFormData({ ...formData, supplier_id: val })}
+                options={suppliers.map(s => ({ value: s.id, label: `${s.company_name}${s.pkp_status ? ' (PKP)' : ''}` }))}
+                placeholder="Select Supplier"
+              />
               {selectedSupplier && selectedSupplier.npwp && (
                 <p className="text-xs text-gray-500 mt-1">NPWP: {selectedSupplier.npwp}</p>
               )}
@@ -780,9 +979,9 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
                           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="">Select Account</option>
-                          {accounts.filter(a => a.account_type === 'Expense' || a.account_type === 'Cost of Goods Sold').map((account) => (
+                          {accounts.filter(a => a.account_type === 'Expense' || a.account_type === 'expense' || a.account_type === 'Cost of Goods Sold' || a.account_type === 'cost_of_goods_sold').map((account) => (
                             <option key={account.id} value={account.id}>
-                              {account.account_code} - {account.account_name}
+                              {account.code} - {account.name}
                             </option>
                           ))}
                         </select>
@@ -798,9 +997,9 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
                           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="">Select Account</option>
-                          {accounts.filter(a => a.account_type === 'Asset').map((account) => (
+                          {accounts.filter(a => a.account_type === 'Asset' || a.account_type === 'asset').map((account) => (
                             <option key={account.id} value={account.id}>
-                              {account.account_code} - {account.account_name}
+                              {account.code} - {account.name}
                             </option>
                           ))}
                         </select>
@@ -816,9 +1015,9 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
                           className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                         >
                           <option value="">Capitalize to Inventory (Default)</option>
-                          {accounts.filter(a => a.account_type === 'Expense' || a.account_type === 'Cost of Goods Sold').map((account) => (
+                          {accounts.filter(a => a.account_type === 'Expense' || a.account_type === 'expense' || a.account_type === 'Cost of Goods Sold' || a.account_type === 'cost_of_goods_sold').map((account) => (
                             <option key={account.id} value={account.id}>
-                              {account.account_code} - {account.account_name}
+                              {account.code} - {account.name}
                             </option>
                           ))}
                         </select>
@@ -870,34 +1069,51 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
                         Rate *
                       </label>
                       <input
-                        type="number"
-                        value={item.unit_price}
-                        onChange={(e) => handleLineChange(index, 'unit_price', parseFloat(e.target.value) || 0)}
-                        min="0"
-                        step="0.01"
+                        type="text"
+                        inputMode="numeric"
+                        value={item.unit_price === 0 ? '' : item.unit_price.toLocaleString('id-ID')}
+                        onChange={(e) => {
+                          const raw = e.target.value.replace(/[.,\s]/g, '').replace(/[^0-9]/g, '');
+                          handleLineChange(index, 'unit_price', parseInt(raw) || 0);
+                        }}
+                        onPaste={(e) => {
+                          e.preventDefault();
+                          const pasted = e.clipboardData.getData('text');
+                          const raw = pasted.replace(/[.,\s]/g, '').replace(/[^0-9]/g, '');
+                          handleLineChange(index, 'unit_price', parseInt(raw) || 0);
+                        }}
+                        placeholder="0"
                         className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
                       />
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">
-                        Tax
+                        Tax %
                       </label>
-                      <input
-                        type="number"
-                        value={item.tax_amount}
-                        onChange={(e) => handleLineChange(index, 'tax_amount', parseFloat(e.target.value) || 0)}
-                        min="0"
-                        step="0.01"
-                        className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
-                      />
+                      <div className="relative">
+                        <input
+                          type="number"
+                          value={item.tax_percent}
+                          onChange={(e) => handleLineChange(index, 'tax_percent', parseFloat(e.target.value) || 0)}
+                          min="0"
+                          max="100"
+                          step="0.1"
+                          placeholder="0"
+                          className="w-full px-2 py-1.5 pr-6 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500"
+                        />
+                        <span className="absolute right-2 top-1/2 -translate-y-1/2 text-xs text-gray-400 pointer-events-none">%</span>
+                      </div>
+                      {item.tax_amount > 0 && (
+                        <p className="text-xs text-gray-400 mt-0.5">{item.tax_amount.toLocaleString()}</p>
+                      )}
                     </div>
                     <div>
                       <label className="block text-xs font-medium text-gray-700 mb-1">
-                        Amount
+                        Total (inc. tax)
                       </label>
                       <input
                         type="text"
-                        value={item.line_total.toLocaleString()}
+                        value={(item.line_total + item.tax_amount).toLocaleString()}
                         readOnly
                         className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-gray-50 font-medium"
                       />
@@ -936,6 +1152,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
               type="button"
               onClick={() => {
                 setModalOpen(false);
+                setEditingInvoice(null);
                 resetForm();
               }}
               className="px-6 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50"
@@ -947,7 +1164,7 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
               disabled={uploading}
               className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
             >
-              {uploading ? 'Uploading...' : 'Create Invoice'}
+              {uploading ? 'Uploading...' : editingInvoice ? 'Save Changes' : 'Create Invoice'}
             </button>
           </div>
         </form>
@@ -960,37 +1177,200 @@ export function PurchaseInvoiceManager({ canManage }: PurchaseInvoiceManagerProp
           onClose={() => {
             setViewModal(false);
             setSelectedInvoice(null);
+            setViewLineItems([]);
+            if (viewBlobUrl) { URL.revokeObjectURL(viewBlobUrl); setViewBlobUrl(null); }
           }}
           title={`Purchase Invoice: ${selectedInvoice.invoice_number}`}
+          size="xl"
         >
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
+          <div className="space-y-5">
+            {/* Header Info */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 bg-gray-50 rounded-lg p-4">
               <div>
-                <p className="text-gray-600">Supplier:</p>
-                <p className="font-medium">{selectedInvoice.suppliers?.company_name}</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Supplier</p>
+                <p className="font-semibold text-gray-900">{selectedInvoice.suppliers?.company_name || '—'}</p>
               </div>
               <div>
-                <p className="text-gray-600">Invoice Date:</p>
-                <p className="font-medium">{new Date(selectedInvoice.invoice_date).toLocaleDateString()}</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Invoice Date</p>
+                <p className="font-semibold text-gray-900">{formatDate(selectedInvoice.invoice_date)}</p>
               </div>
               <div>
-                <p className="text-gray-600">Currency:</p>
-                <p className="font-medium">{selectedInvoice.currency}</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Due Date</p>
+                <p className="font-semibold text-gray-900">{selectedInvoice.due_date ? formatDate(selectedInvoice.due_date) : '—'}</p>
               </div>
               <div>
-                <p className="text-gray-600">Total:</p>
-                <p className="font-medium text-lg">{selectedInvoice.currency} {selectedInvoice.total_amount.toLocaleString()}</p>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Status</p>
+                <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                  selectedInvoice.status === 'paid' ? 'bg-green-100 text-green-800'
+                  : selectedInvoice.status === 'partial' ? 'bg-yellow-100 text-yellow-800'
+                  : 'bg-red-100 text-red-800'
+                }`}>{selectedInvoice.status}</span>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Currency</p>
+                <p className="font-semibold text-gray-900">{selectedInvoice.currency}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Subtotal</p>
+                <p className="font-semibold text-gray-900">{selectedInvoice.currency} {Number(selectedInvoice.subtotal).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Paid Amount</p>
+                <p className="font-semibold text-green-700">{selectedInvoice.currency} {Number(selectedInvoice.paid_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+              </div>
+              <div>
+                <p className="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Balance Due</p>
+                <p className="font-bold text-lg text-blue-700">{selectedInvoice.currency} {Number(selectedInvoice.balance_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
               </div>
             </div>
+
+            {/* Line Items */}
+            <div>
+              <h3 className="text-sm font-semibold text-gray-700 mb-2">Line Items</h3>
+              {viewLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="w-6 h-6 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                </div>
+              ) : viewLineItems.length === 0 ? (
+                <p className="text-sm text-gray-400 italic py-4 text-center">No line items found</p>
+              ) : (
+                <div className="overflow-x-auto rounded-lg border border-gray-200">
+                  <table className="min-w-full divide-y divide-gray-200 text-sm">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">#</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Product</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Description</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Qty</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Unit</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Rate</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-100 bg-white">
+                      {viewLineItems.map((item, idx) => (
+                        <tr key={item.id || idx} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 text-gray-400">{idx + 1}</td>
+                          <td className="px-3 py-2 font-medium text-gray-900">{item.product_name || <span className="text-gray-400 italic">—</span>}</td>
+                          <td className="px-3 py-2 text-gray-600 max-w-xs">
+                            <p className="truncate" title={item.description}>{item.description || '—'}</p>
+                          </td>
+                          <td className="px-3 py-2 text-right text-gray-900">{Number(item.quantity).toLocaleString()}</td>
+                          <td className="px-3 py-2 text-gray-500">{item.unit}</td>
+                          <td className="px-3 py-2 text-right text-gray-900">{selectedInvoice.currency} {Number(item.unit_price).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                          <td className="px-3 py-2 text-right font-medium text-gray-900">{selectedInvoice.currency} {Number(item.line_total).toLocaleString('en-US', { minimumFractionDigits: 2 })}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot className="bg-gray-50">
+                      <tr>
+                        <td colSpan={6} className="px-3 py-2 text-right text-sm font-semibold text-gray-700">Total</td>
+                        <td className="px-3 py-2 text-right text-sm font-bold text-gray-900">
+                          {selectedInvoice.currency} {Number(selectedInvoice.total_amount).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* Notes */}
             {selectedInvoice.notes && (
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <p className="text-xs font-medium text-amber-700 mb-1">Notes / Shipment Details</p>
+                <p className="text-sm text-amber-900">{selectedInvoice.notes}</p>
+              </div>
+            )}
+
+            {/* Attachment */}
+            {selectedInvoice.document_urls && selectedInvoice.document_urls.length > 0 && (
               <div>
-                <p className="text-gray-600 text-sm">Notes:</p>
-                <p className="text-sm">{selectedInvoice.notes}</p>
+                <h3 className="text-sm font-semibold text-gray-700 mb-2">Attachments</h3>
+                <div className="space-y-2">
+                  {selectedInvoice.document_urls.map((url, i) => (
+                    <div key={i} className="flex items-center gap-2 p-2 bg-gray-50 rounded border border-gray-200">
+                      <FileText className="w-4 h-4 text-red-500 flex-shrink-0" />
+                      <span className="text-sm text-gray-700 flex-1 truncate">{url.split('/').pop()}</span>
+                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:underline flex-shrink-0">Open</a>
+                    </div>
+                  ))}
+                </div>
+                {viewBlobLoading && (
+                  <div className="mt-3 flex items-center gap-2 text-sm text-gray-500">
+                    <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    Loading preview...
+                  </div>
+                )}
+                {!viewBlobLoading && viewBlobUrl && (
+                  <div className="mt-3 space-y-2">
+                    <div className="flex items-center justify-between bg-blue-50 px-3 py-2 rounded">
+                      <span className="text-sm text-gray-700">Preview</span>
+                      <a
+                        href={viewBlobUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-xs text-blue-600 hover:underline font-medium"
+                      >
+                        Open in New Tab
+                      </a>
+                    </div>
+                    <object
+                      data={viewBlobUrl}
+                      type="application/pdf"
+                      className="w-full rounded border border-gray-200"
+                      style={{ height: '500px' }}
+                    >
+                      <div className="flex flex-col items-center justify-center h-full bg-gray-50 p-6 text-center">
+                        <FileText className="w-12 h-12 text-gray-400 mb-3" />
+                        <p className="text-sm text-gray-600 mb-3">
+                          Your browser cannot display PDFs inline.
+                        </p>
+                        <a
+                          href={viewBlobUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                        >
+                          <FileText className="w-4 h-4" />
+                          Open PDF in New Tab
+                        </a>
+                      </div>
+                    </object>
+                  </div>
+                )}
+                {!viewBlobLoading && !viewBlobUrl && selectedInvoice.document_urls && selectedInvoice.document_urls.length > 0 && (
+                  <div className="mt-3 p-4 bg-amber-50 border border-amber-200 rounded">
+                    <div className="flex items-start gap-3">
+                      <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-amber-900 mb-1">
+                          PDF Preview Unavailable
+                        </p>
+                        <p className="text-xs text-amber-700 mb-3">
+                          The file may not have been uploaded to storage yet, or the storage bucket may not be accessible. Please use the "Open" button above to download or view the file.
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          <a
+                            href={selectedInvoice.document_urls[0]}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-amber-300 text-amber-800 rounded hover:bg-amber-50 text-xs font-medium"
+                          >
+                            <FileText className="w-3.5 h-3.5" />
+                            Try Opening File
+                          </a>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
         </Modal>
       )}
+
     </div>
   );
 }

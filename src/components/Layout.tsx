@@ -1,8 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useNavigation } from '../contexts/NavigationContext';
+import { useFinance } from '../contexts/FinanceContext';
 import { NotificationDropdown } from './NotificationDropdown';
+import { formatDate } from '../utils/dateFormat';
 import {
   LayoutDashboard,
   Package,
@@ -26,8 +28,53 @@ import {
   RotateCcw,
   AlertTriangle,
   ClipboardList,
+  Sparkles,
+  Calendar,
 } from 'lucide-react';
 import logo from '../assets/Untitled-1.svg';
+
+export interface Quote {
+  content: string;
+  author: string;
+}
+
+export const fallbackQuotes: Quote[] = [
+  { content: "Success is not final, failure is not fatal: it is the courage to continue that counts.", author: "Winston Churchill" },
+  { content: "The only way to do great work is to love what you do.", author: "Steve Jobs" },
+  { content: "Believe you can and you're halfway there.", author: "Theodore Roosevelt" },
+  { content: "Excellence is not a skill, it's an attitude.", author: "Ralph Marston" },
+  { content: "Quality is not an act, it is a habit.", author: "Aristotle" },
+  { content: "The best time to plant a tree was 20 years ago. The second best time is now.", author: "Chinese Proverb" },
+  { content: "Success is the sum of small efforts repeated day in and day out.", author: "Robert Collier" },
+  { content: "Don't watch the clock; do what it does. Keep going.", author: "Sam Levenson" },
+  { content: "The future depends on what you do today.", author: "Mahatma Gandhi" },
+  { content: "Strive not to be a success, but rather to be of value.", author: "Albert Einstein" },
+  { content: "The harder you work for something, the greater you'll feel when you achieve it.", author: "Unknown" },
+  { content: "Dream bigger. Do bigger.", author: "Unknown" },
+  { content: "Don't stop when you're tired. Stop when you're done.", author: "Unknown" },
+  { content: "Wake up with determination. Go to bed with satisfaction.", author: "Unknown" },
+  { content: "Do something today that your future self will thank you for.", author: "Sean Patrick Flanery" },
+  { content: "Little things make big days.", author: "Unknown" },
+  { content: "It's going to be hard, but hard does not mean impossible.", author: "Unknown" },
+  { content: "Don't wait for opportunity. Create it.", author: "Unknown" },
+  { content: "Sometimes we're tested not to show our weaknesses, but to discover our strengths.", author: "Unknown" },
+  { content: "The key to success is to focus on goals, not obstacles.", author: "Unknown" },
+  { content: "Dream it. Believe it. Build it.", author: "Unknown" },
+  { content: "Success doesn't just find you. You have to go out and get it.", author: "Unknown" },
+  { content: "Great things never come from comfort zones.", author: "Unknown" },
+  { content: "Opportunities don't happen. You create them.", author: "Chris Grosser" },
+  { content: "The secret of getting ahead is getting started.", author: "Mark Twain" },
+  { content: "Focus on being productive instead of busy.", author: "Tim Ferriss" },
+  { content: "Action is the foundational key to all success.", author: "Pablo Picasso" },
+  { content: "Your limitation—it's only your imagination.", author: "Unknown" },
+  { content: "Push yourself, because no one else is going to do it for you.", author: "Unknown" },
+  { content: "Sometimes later becomes never. Do it now.", author: "Unknown" }
+];
+
+export const getRandomFallbackQuote = (): Quote => {
+  const randomIndex = Math.floor(Math.random() * fallbackQuotes.length);
+  return fallbackQuotes[randomIndex];
+};
 
 interface LayoutProps {
   children: React.ReactNode;
@@ -35,9 +82,24 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [datePickerOpen, setDatePickerOpen] = useState(false);
+  const datePickerRef = useRef<HTMLDivElement>(null);
   const { profile, signOut } = useAuth();
   const { language, setLanguage, t } = useLanguage();
   const { currentPage, setCurrentPage, sidebarCollapsed, setSidebarCollapsed } = useNavigation();
+  const { dateRange, setDateRange } = useFinance();
+
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (datePickerRef.current && !datePickerRef.current.contains(e.target as Node)) {
+        setDatePickerOpen(false);
+      }
+    };
+    if (datePickerOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [datePickerOpen]);
 
   // Auto-collapse sidebar for specific pages
   const autoCollapsiblePages = ['crm', 'command-center', 'finance'];
@@ -51,23 +113,23 @@ export function Layout({ children }: LayoutProps) {
   }, [currentPage, shouldAutoCollapse, sidebarCollapsed, setSidebarCollapsed]);
 
   const menuItems = [
-    { id: 'dashboard', label: t('nav.dashboard'), icon: LayoutDashboard, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
+    { id: 'dashboard', label: t('nav.dashboard'), icon: LayoutDashboard, roles: ['admin', 'accounts', 'sales', 'warehouse', 'auditor_ca'] },
     { id: 'products', label: t('nav.products'), icon: Package, roles: ['admin', 'sales', 'warehouse'] },
     { id: 'batches', label: t('nav.batches'), icon: Boxes, roles: ['admin', 'warehouse', 'accounts'] },
     { id: 'stock', label: t('nav.stock'), icon: Warehouse, roles: ['admin', 'sales', 'warehouse', 'accounts'] },
-    { id: 'customers', label: t('nav.customers'), icon: Users, roles: ['admin', 'accounts', 'sales'] },
-    { id: 'sales-orders', label: 'Sales Orders', icon: FileText, roles: ['admin', 'accounts', 'sales'] },
+    { id: 'customers', label: t('nav.customers'), icon: Users, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
+    { id: 'sales-orders', label: t('nav.salesOrders'), icon: FileText, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
     { id: 'delivery-challan', label: t('nav.deliveryChallan'), icon: Truck, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
-    { id: 'sales', label: t('nav.sales'), icon: ShoppingCart, roles: ['admin', 'accounts', 'sales'] },
-    { id: 'purchase-orders', label: 'Purchase Orders', icon: ClipboardList, roles: ['admin', 'warehouse', 'accounts'] },
-    { id: 'import-requirements', label: 'Import Requirements', icon: TrendingUp, roles: ['admin', 'warehouse', 'sales'] },
-    { id: 'import-containers', label: 'Import Containers', icon: Package, roles: ['admin', 'warehouse', 'accounts'] },
-    { id: 'finance', label: t('nav.finance'), icon: DollarSign, roles: ['admin', 'accounts'] },
+    { id: 'sales', label: t('nav.sales'), icon: ShoppingCart, roles: ['admin', 'accounts', 'sales', 'warehouse', 'auditor_ca'] },
+    { id: 'purchase-orders', label: t('nav.purchaseOrders'), icon: ClipboardList, roles: ['admin', 'warehouse', 'sales', 'accounts', 'auditor_ca'] },
+    { id: 'import-requirements', label: t('nav.importRequirements'), icon: TrendingUp, roles: ['admin', 'sales'] },
+    { id: 'import-containers', label: t('nav.importContainers'), icon: Package, roles: ['admin', 'accounts'] },
+    { id: 'finance', label: t('nav.finance'), icon: DollarSign, roles: ['admin', 'accounts', 'auditor_ca'] },
     { id: 'crm', label: t('nav.crm'), icon: UserCircle, roles: ['admin', 'sales'] },
-    { id: 'command-center', label: 'Command Center', icon: Zap, roles: ['admin', 'sales'] },
-    { id: 'tasks', label: 'Tasks', icon: CheckSquare, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
+    { id: 'command-center', label: t('nav.commandCenter'), icon: Zap, roles: ['admin', 'sales'] },
+    { id: 'tasks', label: t('nav.tasks'), icon: CheckSquare, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
     { id: 'inventory', label: t('nav.inventory'), icon: Warehouse, roles: ['admin', 'warehouse'] },
-    { id: 'settings', label: t('nav.settings'), icon: Settings, roles: ['admin'] },
+    { id: 'settings', label: t('nav.settings'), icon: Settings, roles: ['admin', 'accounts', 'sales', 'warehouse'] },
   ];
 
   const visibleMenuItems = menuItems.filter(item =>
@@ -117,7 +179,7 @@ export function Layout({ children }: LayoutProps) {
             return (
               <a
                 key={item.id}
-                href={`#${item.id}`}
+                href={`/${item.id}`}
                 onClick={(e) => {
                   e.preventDefault();
                   setCurrentPage(item.id);
@@ -167,7 +229,72 @@ export function Layout({ children }: LayoutProps) {
               )}
             </div>
 
-            <div className="flex-1" />
+            {/* Desktop date range */}
+            <div className="flex-1 hidden md:flex items-center justify-center px-2">
+              <div className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded-lg px-2 py-1">
+                <Calendar className="w-3.5 h-3.5 text-gray-500" />
+                <input
+                  type="date"
+                  value={dateRange.startDate}
+                  onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
+                  className="px-1.5 py-0.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+                <span className="text-xs text-gray-400">to</span>
+                <input
+                  type="date"
+                  value={dateRange.endDate}
+                  onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
+                  className="px-1.5 py-0.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Mobile date range toggle */}
+            <div className="md:hidden relative" ref={datePickerRef}>
+              <button
+                onClick={() => setDatePickerOpen(!datePickerOpen)}
+                className="p-2 rounded hover:bg-gray-100 flex items-center gap-1 text-gray-600"
+                title="Date range filter"
+              >
+                <Calendar className="w-4 h-4" />
+              </button>
+              {datePickerOpen && (
+                <div className="absolute right-0 top-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg p-3 z-50 w-64">
+                  <p className="text-xs font-medium text-gray-600 mb-2">Date Range Filter</p>
+                  <div className="space-y-2">
+                    <div>
+                      <label className="text-xs text-gray-500">From</label>
+                      <input
+                        type="date"
+                        value={dateRange.startDate}
+                        onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
+                        className="w-full mt-0.5 px-2 py-1.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs text-gray-500">To</label>
+                      <input
+                        type="date"
+                        value={dateRange.endDate}
+                        onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
+                        className="w-full mt-0.5 px-2 py-1.5 text-xs border border-gray-200 rounded bg-white focus:ring-1 focus:ring-blue-500"
+                      />
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setDatePickerOpen(false)}
+                    className="mt-2 w-full text-xs bg-blue-600 text-white py-1.5 rounded hover:bg-blue-700"
+                  >
+                    Apply
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <div className="hidden lg:flex items-center gap-2 mr-3 text-xs text-gray-600">
+              <Calendar className="w-3.5 h-3.5" />
+              <span>{formatDate(new Date())}</span>
+            </div>
 
             <div className="flex items-center gap-3">
               <NotificationDropdown />

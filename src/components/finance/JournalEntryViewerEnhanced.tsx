@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useFinance } from '../../contexts/FinanceContext';
-import { Search, FileText, LayoutList, Table2 } from 'lucide-react';
+import { Search, FileText, Edit, Trash2 } from 'lucide-react';
 import { Modal } from '../Modal';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
 
 interface JournalEntry {
   id: string;
@@ -49,6 +51,7 @@ interface VoucherJournalEntry {
 
 interface JournalEntryViewerEnhancedProps {
   canManage: boolean;
+  onEditEntry?: (entryId: string) => void;
 }
 
 const sourceModuleLabels: Record<string, string> = {
@@ -62,7 +65,7 @@ const sourceModuleLabels: Record<string, string> = {
   manual: 'Manual Entry',
 };
 
-export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnhancedProps) {
+export function JournalEntryViewerEnhanced({ canManage, onEditEntry }: JournalEntryViewerEnhancedProps) {
   const { dateRange } = useFinance();
   const [voucherEntries, setVoucherEntries] = useState<VoucherJournalEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -117,7 +120,6 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
 
   const handleViewVoucher = async (voucherEntry: VoucherJournalEntry) => {
     try {
-      // Load full journal entry details
       const { data: entry, error: entryError } = await supabase
         .from('journal_entries')
         .select('*')
@@ -131,6 +133,53 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
       setViewModalOpen(true);
     } catch (error) {
       console.error('Error loading voucher details:', error);
+    }
+  };
+
+  const handleDeleteJournal = async (journalId: string) => {
+    const confirmed = await showConfirm({
+      title: 'Delete Journal Entry',
+      message: 'Are you sure you want to delete this manual journal entry? This action cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: 'danger',
+    });
+
+    if (!confirmed) return;
+
+    try {
+      const { data: bankLinks, error: checkError } = await supabase
+        .from('bank_statement_lines')
+        .select('id')
+        .eq('matched_entry_id', journalId)
+        .limit(1);
+
+      if (checkError) throw checkError;
+
+      if (bankLinks && bankLinks.length > 0) {
+        showToast('Cannot delete: this entry is linked to a bank statement. Unlink it first from Bank Reconciliation.', 'error');
+        return;
+      }
+
+      const { error: linesError } = await supabase
+        .from('journal_entry_lines')
+        .delete()
+        .eq('journal_entry_id', journalId);
+
+      if (linesError) throw linesError;
+
+      const { error: entryError } = await supabase
+        .from('journal_entries')
+        .delete()
+        .eq('id', journalId)
+        .eq('source_module', 'manual');
+
+      if (entryError) throw entryError;
+
+      showToast('Journal entry deleted successfully', 'success');
+      loadVoucherJournal();
+    } catch (error: unknown) {
+      console.error('Error deleting journal:', error);
+      showToast('Error deleting journal entry: ' + (error instanceof Error ? error.message : 'Unknown error'), 'error');
     }
   };
 
@@ -177,12 +226,12 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
           <option value="purchase_invoice">Purchase Invoices</option>
           <option value="receipt">Receipts</option>
           <option value="payment">Payments</option>
+          <option value="expenses">Expenses</option>
           <option value="petty_cash">Petty Cash</option>
-          <option value="fund_transfer">Fund Transfers</option>
+          <option value="fund_transfers">Fund Transfers</option>
           <option value="manual">Manual</option>
         </select>
       </div>
-
 
       {/* Journal Voucher View (Tally Style) - One row per voucher */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
@@ -191,23 +240,21 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
             <thead className="bg-gray-50 sticky top-0">
               <tr>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Date</th>
-                <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Journal No</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Type</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Debit Account</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Credit Account</th>
                 <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Amount</th>
                 <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider border-r">Narration</th>
-                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Details</th>
+                <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-200 bg-white">
               {filteredVouchers.map((voucher) => (
                 <tr key={voucher.journal_entry_id} className="hover:bg-gray-50 transition-colors">
                   <td className="px-3 py-2 whitespace-nowrap text-gray-900 border-r">
-                    {new Date(voucher.date).toLocaleDateString('id-ID', { day: '2-digit', month: '2-digit', year: 'numeric' })}
-                  </td>
-                  <td className="px-3 py-2 whitespace-nowrap font-mono text-blue-600 border-r">
-                    {voucher.voucher_no}
+                    <div className="text-xs">
+                      {new Date(voucher.date).toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: '2-digit' })}
+                    </div>
                   </td>
                   <td className="px-3 py-2 whitespace-nowrap border-r">
                     <span className="px-2 py-1 text-xs bg-gray-100 text-gray-700 rounded">
@@ -225,7 +272,7 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
                     </div>
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap border-r">
-                    <span className="text-gray-900 font-medium">
+                    <span className="text-gray-900 font-medium text-xs">
                       Rp {voucher.amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </span>
                   </td>
@@ -235,7 +282,7 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
                     </div>
                   </td>
                   <td className="px-3 py-2 text-center">
-                    {voucher.is_multi_line && (
+                    <div className="flex items-center justify-center gap-2">
                       <button
                         onClick={() => handleViewVoucher(voucher)}
                         className="text-blue-600 hover:text-blue-800"
@@ -243,7 +290,25 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
                       >
                         <FileText className="w-4 h-4" />
                       </button>
-                    )}
+                      {canManage && voucher.source_module === 'manual' && (
+                        <>
+                          <button
+                            onClick={() => onEditEntry?.(voucher.journal_entry_id)}
+                            className="text-gray-600 hover:text-gray-800"
+                            title="Edit manual entry"
+                          >
+                            <Edit className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteJournal(voucher.journal_entry_id)}
+                            className="text-red-600 hover:text-red-800"
+                            title="Delete manual entry"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -257,7 +322,7 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
             </tbody>
             <tfoot className="bg-gray-50 font-bold">
               <tr>
-                <td colSpan={5} className="px-3 py-2 text-right">Total:</td>
+                <td colSpan={4} className="px-3 py-2 text-right">Total:</td>
                 <td className="px-3 py-2 text-right text-gray-900 border-r">
                   Rp {totals.debit.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </td>
@@ -279,7 +344,7 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
               </div>
               <div>
                 <span className="text-gray-500">Source:</span>
-                <span className="ml-2">{selectedEntry.source_module ? sourceModuleLabels[selectedEntry.source_module] : 'Manual'}</span>
+                <span className="ml-2">{selectedEntry.source_module ? sourceModuleLabels[selectedEntry.source_module] || selectedEntry.source_module : 'Manual'}</span>
               </div>
               <div>
                 <span className="text-gray-500">Reference:</span>
@@ -287,7 +352,7 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
               </div>
               <div>
                 <span className="text-gray-500">Posted:</span>
-                <span className="ml-2">{new Date(selectedEntry.posted_at).toLocaleString('id-ID')}</span>
+                <span className="ml-2">{selectedEntry.posted_at ? new Date(selectedEntry.posted_at).toLocaleString('id-ID') : '-'}</span>
               </div>
             </div>
 
@@ -314,7 +379,7 @@ export function JournalEntryViewerEnhanced({ canManage }: JournalEntryViewerEnha
                         <div className="font-mono text-xs text-gray-500">{line.chart_of_accounts?.code}</div>
                         <div>{line.chart_of_accounts?.name}</div>
                         {line.customers && <div className="text-xs text-blue-600">{line.customers.company_name}</div>}
-                        {line.suppliers && <div className="text-xs text-purple-600">{line.suppliers.company_name}</div>}
+                        {line.suppliers && <div className="text-xs text-orange-600">{line.suppliers.company_name}</div>}
                       </td>
                       <td className="px-3 py-2 text-gray-600">{line.description || '-'}</td>
                       <td className="px-3 py-2 text-right text-blue-600">

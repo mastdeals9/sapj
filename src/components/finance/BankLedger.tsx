@@ -112,28 +112,22 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       const storedOpeningBalance = selectedBankData?.opening_balance || 0;
       const openingBalanceDate = selectedBankData?.opening_balance_date || '2025-01-01';
 
-      console.log('📊 Loading ledger for bank:', selectedBankData?.bank_name, selectedBankData?.account_number, 'ID:', selectedBank);
-      console.log('💰 Opening Balance:', storedOpeningBalance, 'as of', openingBalanceDate);
-      console.log('📅 Date Range:', globalDateRange.startDate, 'to', globalDateRange.endDate);
-
       // Calculate the effective opening balance for the filtered period
       let effectiveOpeningBalance = storedOpeningBalance;
 
-      // If filter starts after the opening balance date, calculate balance up to filter start
+      // Get all bank statement lines before filter start date (from opening balance date onwards)
       if (globalDateRange.startDate > openingBalanceDate) {
-        console.log('🔄 Calculating opening balance from', openingBalanceDate, 'to', globalDateRange.startDate);
+        const { data: priorLines } = await supabase
+          .from('bank_statement_lines')
+          .select('debit_amount, credit_amount')
+          .eq('bank_account_id', selectedBank)
+          .gte('transaction_date', openingBalanceDate)
+          .lt('transaction_date', globalDateRange.startDate);
 
-        // Get all transactions between opening_balance_date and filter start date (exclusive)
-        const { data: priorTransactions } = await supabase.rpc('calculate_balance_between_dates', {
-          p_bank_account_id: selectedBank,
-          p_start_date: openingBalanceDate,
-          p_end_date: globalDateRange.startDate
-        });
-
-        if (priorTransactions && priorTransactions.length > 0) {
-          const netChange = priorTransactions[0].net_change || 0;
-          effectiveOpeningBalance = storedOpeningBalance + netChange;
-          console.log('✅ Net change:', netChange, '→ Effective opening balance:', effectiveOpeningBalance);
+        if (priorLines) {
+          priorLines.forEach(line => {
+            effectiveOpeningBalance += Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+          });
         }
       }
 
@@ -146,8 +140,7 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       endDatePlusOne.setDate(endDatePlusOne.getDate() + 1);
       const endDateStr = endDatePlusOne.toISOString().split('T')[0];
 
-      // Get bank statement lines ONLY (actual bank transactions)
-      // Bank statements are the source of truth - they already include all cleared transactions
+      // Get bank statement lines (source of truth for Bank Ledger)
       const { data: bankLines } = await supabase
         .from('bank_statement_lines')
         .select('id, transaction_date, description, reference, debit_amount, credit_amount, matched_expense_id, matched_receipt_id, matched_entry_id, notes')
@@ -155,8 +148,6 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
         .gte('transaction_date', globalDateRange.startDate)
         .lt('transaction_date', endDateStr)
         .order('transaction_date');
-
-      console.log('✅ Bank statement lines found:', bankLines?.length || 0);
 
       if (bankLines) {
         bankLines.forEach(line => {
@@ -174,12 +165,10 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
         });
       }
 
-      // Sort by date, then by type (credits before debits on same date)
+      // Sort by date
       entries.sort((a, b) => {
         const dateCompare = new Date(a.entry_date).getTime() - new Date(b.entry_date).getTime();
         if (dateCompare !== 0) return dateCompare;
-
-        // On same date, show credits (money in) before debits (money out)
         const aIsCredit = a.credit > 0;
         const bIsCredit = b.credit > 0;
         if (aIsCredit && !bIsCredit) return -1;
@@ -191,9 +180,7 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
       const ledger: LedgerEntry[] = entries.map((entry: any) => {
         const debit = entry.debit || 0;
         const credit = entry.credit || 0;
-
         runningBalance += credit - debit;
-
         return {
           id: entry.id,
           entry_date: entry.entry_date,
@@ -375,24 +362,12 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
             <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Date
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Particulars
-                  </th>
-                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Ref No
-                  </th>
-                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Debit (Dr)
-                  </th>
-                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Credit (Cr)
-                  </th>
-                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">
-                    Balance
-                  </th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Date</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Particulars</th>
+                  <th className="px-3 py-3 text-left text-xs font-medium text-gray-700 uppercase tracking-wider">Ref No</th>
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">Debit (Dr)</th>
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">Credit (Cr)</th>
+                  <th className="px-3 py-3 text-right text-xs font-medium text-gray-700 uppercase tracking-wider">Balance</th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
@@ -415,9 +390,7 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
 
                 {loading ? (
                   <tr>
-                    <td colSpan={6} className="px-3 py-8 text-center text-gray-500">
-                      Loading entries...
-                    </td>
+                    <td colSpan={6} className="px-3 py-8 text-center text-gray-500">Loading entries...</td>
                   </tr>
                 ) : ledgerEntries.length === 0 ? (
                   <tr>
@@ -484,10 +457,7 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
           <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[80vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold text-gray-900">Transaction Details</h3>
-              <button
-                onClick={() => setShowDetailModal(false)}
-                className="text-gray-400 hover:text-gray-600"
-              >
+              <button onClick={() => setShowDetailModal(false)} className="text-gray-400 hover:text-gray-600">
                 <span className="text-2xl">&times;</span>
               </button>
             </div>
@@ -509,13 +479,6 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
                 <p className="font-medium">{selectedEntry.particulars}</p>
               </div>
 
-              {selectedEntry.description && (
-                <div>
-                  <p className="text-sm text-gray-600">Description</p>
-                  <p className="font-medium">{selectedEntry.description}</p>
-                </div>
-              )}
-
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <p className="text-sm text-gray-600">Debit</p>
@@ -531,64 +494,14 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
                 </div>
               </div>
 
-              {selectedEntry.type === 'expense' && (
-                <>
-                  <div>
-                    <p className="text-sm text-gray-600">Expense Category</p>
-                    <p className="font-medium capitalize">{selectedEntry.expenseCategory?.replace('_', ' ')}</p>
-                  </div>
-
-                  {loadingDocs ? (
-                    <div className="text-center py-4">
-                      <p className="text-sm text-gray-500">Loading documents...</p>
-                    </div>
-                  ) : expenseDocuments.length > 0 ? (
-                    <div>
-                      <p className="text-sm text-gray-600 mb-2">Attached Documents ({expenseDocuments.length})</p>
-                      <div className="grid grid-cols-2 gap-2">
-                        {expenseDocuments.map((url, idx) => (
-                          <a
-                            key={idx}
-                            href={url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="block p-2 border rounded hover:bg-gray-50 text-sm text-blue-600 hover:text-blue-800 truncate"
-                          >
-                            Document {idx + 1}
-                          </a>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="text-center py-2">
-                      <p className="text-sm text-gray-400">No documents attached</p>
-                    </div>
-                  )}
-                </>
-              )}
-
-              {selectedEntry.type === 'receipt' && selectedEntry.customerName && (
-                <div>
-                  <p className="text-sm text-gray-600">Customer</p>
-                  <p className="font-medium">{selectedEntry.customerName}</p>
-                </div>
-              )}
-
-              {selectedEntry.type === 'payment' && selectedEntry.supplierName && (
-                <div>
-                  <p className="text-sm text-gray-600">Supplier</p>
-                  <p className="font-medium">{selectedEntry.supplierName}</p>
-                </div>
-              )}
-
-              {selectedEntry.type === 'bank' && selectedEntry.notes && (
+              {selectedEntry.notes && (
                 <div>
                   <p className="text-sm text-gray-600">Notes</p>
                   <p className="font-medium">{selectedEntry.notes}</p>
                 </div>
               )}
 
-              {selectedEntry.type === 'bank' && selectedEntry.linkedId && (
+              {selectedEntry.linkedId && (
                 <div className="bg-blue-50 p-3 rounded-lg">
                   <p className="text-sm text-blue-900 font-medium">
                     This transaction is matched to a system entry
@@ -598,10 +511,7 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
             </div>
 
             <div className="mt-6 flex justify-end">
-              <button
-                onClick={() => setShowDetailModal(false)}
-                className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700"
-              >
+              <button onClick={() => setShowDetailModal(false)} className="px-4 py-2 bg-gray-600 text-white rounded hover:bg-gray-700">
                 Close
               </button>
             </div>
@@ -641,7 +551,7 @@ export default function BankLedger({ selectedBank: propSelectedBank }: BankLedge
               required
             />
             <p className="text-xs text-gray-500 mt-1">
-              Set the date when this opening balance is effective. All transactions from this date onwards will be included in the ledger.
+              Set the date when this opening balance is effective.
             </p>
           </div>
 

@@ -68,6 +68,78 @@ export function AccountLedger() {
     try {
       setLoading(true);
 
+      const isDebitNormal = selectedAccount.normal_balance === 'debit' ||
+        (!selectedAccount.normal_balance && (selectedAccount.account_type === 'asset' || selectedAccount.account_type === 'expense'));
+
+      // Check if this COA is linked to a bank account — if so, use bank_statement_lines (same as Bank Ledger)
+      const { data: bankAccountData } = await supabase
+        .from('bank_accounts')
+        .select('id, opening_balance, opening_balance_date')
+        .eq('coa_id', selectedAccount.id)
+        .maybeSingle();
+
+      if (bankAccountData) {
+        // === BANK ACCOUNT: mirror exactly what Bank Ledger does ===
+        const storedOpeningBalance = Number(bankAccountData.opening_balance) || 0;
+        const openingBalanceDate = bankAccountData.opening_balance_date || '2025-01-01';
+
+        let effectiveOpeningBalance = storedOpeningBalance;
+
+        // Sum all bank statement lines before the filter start date (from opening balance date onwards)
+        if (dateRange.startDate > openingBalanceDate) {
+          const { data: priorLines } = await supabase
+            .from('bank_statement_lines')
+            .select('debit_amount, credit_amount')
+            .eq('bank_account_id', bankAccountData.id)
+            .gte('transaction_date', openingBalanceDate)
+            .lt('transaction_date', dateRange.startDate);
+
+          priorLines?.forEach((line: any) => {
+            effectiveOpeningBalance += Number(line.credit_amount || 0) - Number(line.debit_amount || 0);
+          });
+        }
+
+        setOpeningBalance(effectiveOpeningBalance);
+
+        // Get bank statement lines for the date range
+        const endDatePlusOne = new Date(dateRange.endDate);
+        endDatePlusOne.setDate(endDatePlusOne.getDate() + 1);
+        const endDateStr = endDatePlusOne.toISOString().split('T')[0];
+
+        const { data: bankLines } = await supabase
+          .from('bank_statement_lines')
+          .select('id, transaction_date, description, reference, debit_amount, credit_amount')
+          .eq('bank_account_id', bankAccountData.id)
+          .gte('transaction_date', dateRange.startDate)
+          .lt('transaction_date', endDateStr)
+          .order('transaction_date');
+
+        let runningBalance = effectiveOpeningBalance;
+        const ledgerWithBalance = (bankLines || []).map((line: any) => {
+          const debit = Number(line.debit_amount || 0);
+          const credit = Number(line.credit_amount || 0);
+          runningBalance += credit - debit;
+          return {
+            id: line.id,
+            line_number: 0,
+            journal_entry_id: '',
+            entry_date: line.transaction_date,
+            entry_number: line.reference || '-',
+            source_module: 'bank',
+            reference_number: line.reference,
+            description: line.description || 'Bank Transaction',
+            debit,
+            credit,
+            balance: runningBalance,
+          };
+        });
+
+        setLedgerData(ledgerWithBalance);
+        return;
+      }
+
+      // === NON-BANK ACCOUNT: use journal_entry_lines as before ===
+
       // Get opening balance (all transactions before start date)
       const { data: openingData, error: openingError } = await supabase
         .from('journal_entry_lines')
@@ -79,12 +151,13 @@ export function AccountLedger() {
 
       let opening = 0;
       openingData?.forEach((line: any) => {
-        if (selectedAccount.normal_balance === 'debit') {
+        if (isDebitNormal) {
           opening += line.debit - line.credit;
         } else {
           opening += line.credit - line.debit;
         }
       });
+
       setOpeningBalance(opening);
 
       // Get transactions in date range
@@ -103,22 +176,31 @@ export function AccountLedger() {
         .eq('account_id', selectedAccount.id)
         .gte('journal_entries.entry_date', dateRange.startDate)
         .lte('journal_entries.entry_date', dateRange.endDate)
-        .order('journal_entries.entry_date')
         .order('line_number');
 
-      if (error) throw error;
+      if (error) {
+        console.error('Error loading ledger:', error);
+        throw error;
+      }
 
-      // Calculate running balance
+      const sortedData = (data || []).sort((a: any, b: any) => {
+        const dateA = new Date(a.journal_entries.entry_date).getTime();
+        const dateB = new Date(b.journal_entries.entry_date).getTime();
+        if (dateA !== dateB) return dateA - dateB;
+        return a.line_number - b.line_number;
+      });
+
       let runningBalance = opening;
-      const ledgerWithBalance = (data || []).map((line: any) => {
+      const ledgerWithBalance = sortedData.map((line: any) => {
         const entry = line.journal_entries;
 
-        // Update balance based on account type
-        if (selectedAccount.normal_balance === 'debit') {
+        if (isDebitNormal) {
           runningBalance += (line.debit - line.credit);
         } else {
           runningBalance += (line.credit - line.debit);
         }
+
+        const narration = line.description || entry.reference_number || '-';
 
         return {
           id: line.id,
@@ -128,7 +210,7 @@ export function AccountLedger() {
           entry_number: entry.entry_number,
           source_module: entry.source_module,
           reference_number: entry.reference_number,
-          description: line.description,
+          description: narration,
           debit: line.debit,
           credit: line.credit,
           balance: runningBalance,
@@ -202,6 +284,23 @@ export function AccountLedger() {
           </button>
         )}
       </div>
+
+      {!selectedAccount && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-6 text-center">
+          <p className="text-blue-800 font-medium mb-2">Select an account to view its ledger</p>
+          <p className="text-blue-600 text-sm mb-4">
+            Use the dropdown above to choose an account, or search by code or name.
+          </p>
+          <div className="bg-white border border-blue-200 rounded p-3 text-left max-w-md mx-auto">
+            <p className="text-sm text-gray-700 mb-1">
+              <span className="font-semibold">Tip:</span> To view all journal entries across all accounts:
+            </p>
+            <p className="text-sm text-blue-700">
+              Go to <span className="font-mono bg-blue-100 px-2 py-0.5 rounded">Journal Register</span> in the Books menu (Ctrl+J)
+            </p>
+          </div>
+        </div>
+      )}
 
       {selectedAccount && (
         <>

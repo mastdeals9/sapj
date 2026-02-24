@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase';
 import { useAuth } from '../../contexts/AuthContext';
-import { Calendar, Clock, MapPin, Users, Plus, Edit2, Trash2, Video, Phone } from 'lucide-react';
+import { Calendar, Clock, Users, Plus, Edit2, Trash2, Video, Phone } from 'lucide-react';
+import { SearchableSelect } from '../SearchableSelect';
+import { formatDate } from '../../utils/dateFormat';
 
 interface Appointment {
   id: string;
@@ -41,13 +43,15 @@ interface AppointmentSchedulerProps {
 }
 
 export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated }: AppointmentSchedulerProps) {
-  const { profile } = useAuth();
+  useAuth();
   const [appointments, setAppointments] = useState<Appointment[]>([]);
   const [contacts, setContacts] = useState<Contact[]>([]);
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
   const [editingAppointment, setEditingAppointment] = useState<Appointment | null>(null);
+  const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const [formData, setFormData] = useState({
     activity_type: 'meeting',
     subject: '',
@@ -66,6 +70,17 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
       loadContacts();
     }
   }, [customerId, leadId]);
+
+  useEffect(() => {
+    if (toast) {
+      const timer = setTimeout(() => setToast(null), 3000);
+      return () => clearTimeout(timer);
+    }
+  }, [toast]);
+
+  const showToast = (msg: string, type: 'success' | 'error' = 'success') => {
+    setToast({ msg, type });
+  };
 
   const loadContacts = async () => {
     try {
@@ -186,11 +201,12 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
         auto_create_followup_task: false,
       });
 
+      showToast(editingAppointment ? 'Appointment updated' : 'Appointment scheduled');
       loadAppointments();
       onAppointmentCreated?.();
     } catch (error) {
       console.error('Error saving appointment:', error);
-      alert('Failed to save appointment. Please try again.');
+      showToast('Failed to save appointment. Please try again.', 'error');
     }
   };
 
@@ -220,8 +236,6 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this appointment?')) return;
-
     try {
       const { error } = await supabase
         .from('crm_activities')
@@ -229,10 +243,12 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
         .eq('id', id);
 
       if (error) throw error;
+      setConfirmDeleteId(null);
+      showToast('Appointment deleted');
       loadAppointments();
     } catch (error) {
       console.error('Error deleting appointment:', error);
-      alert('Failed to delete appointment. Please try again.');
+      showToast('Failed to delete appointment. Please try again.', 'error');
     }
   };
 
@@ -247,10 +263,11 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
         .eq('id', id);
 
       if (error) throw error;
+      showToast('Appointment marked as completed');
       loadAppointments();
     } catch (error) {
       console.error('Error completing appointment:', error);
-      alert('Failed to complete appointment. Please try again.');
+      showToast('Failed to complete appointment. Please try again.', 'error');
     }
   };
 
@@ -293,13 +310,44 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
   };
 
   if (loading) {
-    return <div className="flex justify-center py-8">Loading appointments...</div>;
+    return <div className="flex justify-center py-8 text-gray-500 text-sm">Loading...</div>;
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
+      {toast && (
+        <div className={`fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg text-sm text-white transition-all ${
+          toast.type === 'error' ? 'bg-red-600' : 'bg-green-600'
+        }`}>
+          {toast.msg}
+        </div>
+      )}
+
+      {confirmDeleteId && (
+        <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl p-6 max-w-sm w-full">
+            <h3 className="text-base font-semibold text-gray-900 mb-2">Delete Appointment</h3>
+            <p className="text-sm text-gray-600 mb-4">Are you sure you want to delete this appointment?</p>
+            <div className="flex gap-3 justify-end">
+              <button
+                onClick={() => setConfirmDeleteId(null)}
+                className="px-4 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDelete(confirmDeleteId)}
+                className="px-4 py-2 text-sm bg-red-600 text-white rounded-lg hover:bg-red-700"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
-        <h3 className="text-lg font-semibold text-gray-900">Appointments & Meetings</h3>
+        <h3 className="text-base font-semibold text-gray-900">Appointments & Meetings</h3>
         <button
           onClick={() => {
             setEditingAppointment(null);
@@ -327,25 +375,20 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
       </div>
 
       {showForm && (
-        <div className="bg-gray-50 rounded-lg p-6 border border-gray-200">
-          <form onSubmit={handleSubmit} className="space-y-4">
-            <div className="grid grid-cols-2 gap-4">
+        <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+          <form onSubmit={handleSubmit} className="space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               {!customerId && !leadId && (
-                <div className="col-span-2">
+                <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Customer *
                   </label>
-                  <select
+                  <SearchableSelect
                     value={formData.customer_id}
-                    onChange={(e) => setFormData({ ...formData, customer_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    required
-                  >
-                    <option value="">Select a customer...</option>
-                    {contacts.map(contact => (
-                      <option key={contact.id} value={contact.id}>{contact.company_name}</option>
-                    ))}
-                  </select>
+                    onChange={(val) => setFormData({ ...formData, customer_id: val })}
+                    options={contacts.map(c => ({ value: c.id, label: c.company_name }))}
+                    placeholder="Select a customer..."
+                  />
                 </div>
               )}
 
@@ -378,7 +421,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 />
               </div>
 
-              <div className="col-span-2">
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Subject *
                 </label>
@@ -392,7 +435,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 />
               </div>
 
-              <div className="col-span-2">
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Description / Agenda
                 </label>
@@ -405,7 +448,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 />
               </div>
 
-              <div className="col-span-2">
+              <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Participants
                 </label>
@@ -435,7 +478,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                 </p>
               </div>
 
-              <div className="col-span-2">
+              <div className="md:col-span-2">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="checkbox"
@@ -528,7 +571,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                             <Edit2 className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleDelete(appointment.id)}
+                            onClick={() => setConfirmDeleteId(appointment.id)}
                             className="p-1 hover:bg-white rounded transition"
                             title="Delete"
                           >
@@ -589,7 +632,7 @@ export function AppointmentScheduler({ customerId, leadId, onAppointmentCreated 
                       <div className="flex-1 min-w-0">
                         <h4 className="font-medium text-gray-700">{appointment.subject}</h4>
                         <p className="text-sm text-gray-500 mt-1">
-                          {formatAppointmentType(appointment.activity_type)} • {new Date(appointment.follow_up_date).toLocaleDateString()}
+                          {formatAppointmentType(appointment.activity_type)} • {formatDate(appointment.follow_up_date)}
                         </p>
                       </div>
                     </div>

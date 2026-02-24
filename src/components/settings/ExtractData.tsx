@@ -25,7 +25,8 @@ export function ExtractData() {
   const [contacts, setContacts] = useState<ExtractedContact[]>([]);
   const [stats, setStats] = useState<{ total_emails: number; total_contacts: number } | null>(null);
   const [selectedContacts, setSelectedContacts] = useState<Set<number>>(new Set());
-  const [maxEmails, setMaxEmails] = useState(100);
+  const [extractAll, setExtractAll] = useState(true);
+  const [maxEmails, setMaxEmails] = useState(500);
 
   useEffect(() => {
     loadSavedContacts();
@@ -110,7 +111,7 @@ export function ExtractData() {
         body: JSON.stringify({
           access_token: connection.access_token,
           refresh_token: connection.refresh_token,
-          max_emails: maxEmails,
+          max_emails: extractAll ? 5000 : maxEmails,
           user_id: user.id,
           connection_id: connection.id,
         }),
@@ -355,24 +356,47 @@ export function ExtractData() {
       </div>
 
       <div className="bg-white border border-gray-200 rounded-lg p-6 space-y-4">
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Maximum Emails to Scan
-            </label>
-            <input
-              type="number"
-              value={maxEmails}
-              onChange={(e) => setMaxEmails(Math.max(50, Math.min(500, parseInt(e.target.value) || 100)))}
-              min="50"
-              max="500"
-              step="50"
-              className="w-48 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-            />
-            <p className="text-xs text-gray-500 mt-1">Range: 50 - 500 emails. Recommended: 100-200 for quality</p>
+        <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex-1 min-w-0">
+            <label className="block text-sm font-medium text-gray-700 mb-2">Scan Mode</label>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  checked={extractAll}
+                  onChange={() => setExtractAll(true)}
+                  className="text-blue-600"
+                />
+                <span className="text-sm text-gray-700 font-medium">Extract All New Emails</span>
+                <span className="text-xs text-gray-500">(recommended — processes everything at once)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  checked={!extractAll}
+                  onChange={() => setExtractAll(false)}
+                  className="text-blue-600"
+                />
+                <span className="text-sm text-gray-700">Limit to</span>
+                <input
+                  type="number"
+                  value={maxEmails}
+                  onChange={(e) => setMaxEmails(Math.max(50, Math.min(5000, parseInt(e.target.value) || 500)))}
+                  disabled={extractAll}
+                  min="50"
+                  max="5000"
+                  step="100"
+                  className="w-24 px-2 py-1 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 disabled:opacity-40"
+                />
+                <span className="text-sm text-gray-500">emails</span>
+              </label>
+            </div>
+            {extractAll && (
+              <p className="text-xs text-blue-600 mt-1">All unprocessed emails will be scanned. Each run picks up where the last left off.</p>
+            )}
           </div>
 
-          <div className="flex-shrink-0 pt-6">
+          <div className="flex-shrink-0">
             <button
               onClick={extractContactsFromGmail}
               disabled={extracting}
@@ -381,12 +405,12 @@ export function ExtractData() {
               {extracting ? (
                 <>
                   <RefreshCw className="h-5 w-5 animate-spin" />
-                  Extracting...
+                  Extracting... (this may take a few minutes)
                 </>
               ) : (
                 <>
                   <Mail className="h-5 w-5" />
-                  Extract Contacts
+                  {extractAll ? 'Extract All Contacts' : 'Extract Contacts'}
                 </>
               )}
             </button>

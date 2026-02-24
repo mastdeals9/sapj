@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase';
-import { Users, Upload, Search, Edit, Trash2, Building, Mail, Phone, Globe, MapPin, Activity, Send } from 'lucide-react';
+import { Users, Upload, Search, Edit, Trash2, Building, Mail, Phone, Globe, MapPin, Activity, Send, MessageCircle } from 'lucide-react';
 import { Modal } from '../Modal';
 import { CustomerInteractionTimeline } from './CustomerInteractionTimeline';
 import { BulkEmailComposer } from './BulkEmailComposer';
@@ -131,12 +131,12 @@ export function CustomerDatabase({ canManage }: CustomerDatabaseProps) {
       company_name: contact.company_name,
       address: contact.address || '',
       city: contact.city || '',
-      company_type: (contact.company_type as any) || 'trader',
+      company_type: (contact.company_type as 'trader' | 'end_user') || 'trader',
       phone: contact.phone || '',
       contact_person: contact.contact_person || '',
       mobile: contact.mobile || '',
       email: contact.email || '',
-      customer_type: (contact.customer_type as any) || 'prospect',
+      customer_type: (contact.customer_type as 'prospect' | 'active' | 'inactive' | 'vip') || 'prospect',
       notes: contact.notes || '',
     });
     setModalOpen(true);
@@ -195,7 +195,7 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
         if (!lines[i].trim()) continue;
 
         const values = lines[i].split(',').map(v => v.trim().replace(/"/g, ''));
-        const contact: any = {
+        const contact: Record<string, unknown> = {
           created_by: user.id,
           first_contact_date: new Date().toISOString().split('T')[0],
         };
@@ -581,7 +581,7 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
               </label>
               <select
                 value={formData.company_type}
-                onChange={(e) => setFormData({ ...formData, company_type: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, company_type: e.target.value as 'trader' | 'end_user' })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 required
               >
@@ -653,7 +653,7 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
               </label>
               <select
                 value={formData.customer_type}
-                onChange={(e) => setFormData({ ...formData, customer_type: e.target.value as any })}
+                onChange={(e) => setFormData({ ...formData, customer_type: e.target.value as 'prospect' | 'active' | 'inactive' | 'vip' })}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
               >
                 <option value="prospect">Prospect</option>
@@ -802,6 +802,16 @@ Bio Solutions Ltd,"789 Industrial Zone",Bandung,TRADER,022-5554321,David Chen,08
                 <div className="flex items-center gap-2">
                   <Phone className="w-4 h-4 text-gray-400" />
                   <span className="text-sm text-gray-900">{selectedContact.phone}</span>
+                  <a
+                    href={`https://wa.me/${selectedContact.phone.replace(/\D/g, '').replace(/^0/, '62')}?text=${encodeURIComponent(`Hello ${selectedContact.company_name},`)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center gap-1 px-2 py-0.5 text-[11px] bg-green-50 text-green-700 rounded hover:bg-green-100 border border-green-200"
+                    title="Open WhatsApp chat"
+                  >
+                    <MessageCircle className="w-3 h-3" />
+                    WhatsApp
+                  </a>
                 </div>
               )}
               {selectedContact.website && (

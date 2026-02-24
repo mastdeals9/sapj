@@ -2,13 +2,16 @@ import { useState } from 'react';
 import { supabase } from '../../lib/supabase';
 import { UserPlus, Trash2, CheckCircle, XCircle, Mail, Lock, User as UserIcon, Briefcase, Edit2, X as XIcon } from 'lucide-react';
 import { Modal } from '../Modal';
+import { showToast } from '../ToastNotification';
+import { showConfirm } from '../ConfirmDialog';
+import { formatDate } from '../../utils/dateFormat';
 
 interface UserProfile {
   id: string;
   username: string;
   email: string;
   full_name: string;
-  role: 'admin' | 'sales' | 'accounts' | 'warehouse';
+  role: 'admin' | 'sales' | 'accounts' | 'warehouse' | 'auditor_ca';
   is_active: boolean;
   created_at: string;
 }
@@ -31,7 +34,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     email: '',
     password: '',
     full_name: '',
-    role: 'sales' as 'admin' | 'sales' | 'accounts' | 'warehouse',
+    role: 'sales' as 'admin' | 'sales' | 'accounts' | 'warehouse' | 'auditor_ca',
   });
 
   const handleAddUser = async (e: React.FormEvent) => {
@@ -39,13 +42,15 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     setLoading(true);
 
     try {
-      // Create auth user
+      // Create auth user with metadata (trigger will create profile automatically)
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email,
         password: formData.password,
         options: {
           data: {
+            username: formData.username.toLowerCase(),
             full_name: formData.full_name,
+            role: formData.role,
             email_verified: true,
           },
         },
@@ -54,21 +59,18 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
       if (authError) throw authError;
       if (!authData.user) throw new Error('Failed to create user');
 
-      // Create user profile
-      const { error: profileError } = await supabase
+      // Wait a moment for trigger to complete
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Update profile with is_active flag if needed
+      const { error: updateError } = await supabase
         .from('user_profiles')
-        .insert([{
-          id: authData.user.id,
-          username: formData.username.toLowerCase(),
-          email: formData.email,
-          full_name: formData.full_name,
-          role: formData.role,
-          is_active: true,
-        }]);
+        .update({ is_active: true })
+        .eq('id', authData.user.id);
 
-      if (profileError) throw profileError;
+      if (updateError) console.warn('Profile update warning:', updateError);
 
-      alert(`User ${formData.full_name} created successfully! Username: ${formData.username}`);
+      showToast({ type: 'success', title: 'Success', message: `User ${formData.full_name} created successfully! Username: ${formData.username}` });
       setShowAddModal(false);
       setFormData({
         username: '',
@@ -80,7 +82,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
       onRefresh();
     } catch (error: any) {
       console.error('Error creating user:', error);
-      alert(error.message || 'Failed to create user. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to create user. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -93,18 +95,32 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     setLoading(true);
 
     try {
-      const { error } = await supabase
-        .from('user_profiles')
-        .update({
-          username: formData.username.toLowerCase(),
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) throw new Error('Not authenticated');
+
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const response = await fetch(`${supabaseUrl}/functions/v1/admin-update-user`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          user_id: editingUser.id,
+          email: formData.email,
+          username: formData.username,
           full_name: formData.full_name,
           role: formData.role,
-        })
-        .eq('id', editingUser.id);
+        }),
+      });
 
-      if (error) throw error;
+      const result = await response.json();
 
-      alert(`User ${formData.full_name} updated successfully!`);
+      if (!response.ok) {
+        throw new Error(result.error || 'Failed to update user');
+      }
+
+      showToast({ type: 'success', title: 'Success', message: `User ${formData.full_name} updated successfully!` });
       setShowEditModal(false);
       setEditingUser(null);
       setFormData({
@@ -117,7 +133,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
       onRefresh();
     } catch (error: any) {
       console.error('Error updating user:', error);
-      alert(error.message || 'Failed to update user. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to update user. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -137,7 +153,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
   const toggleUserStatus = async (userId: string, currentStatus: boolean) => {
     const action = currentStatus ? 'deactivate' : 'activate';
-    if (!confirm(`Are you sure you want to ${action} this user?`)) {
+    if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to ${action} this user?`, variant: 'warning', confirmLabel: action.charAt(0).toUpperCase() + action.slice(1) })) {
       return;
     }
 
@@ -149,16 +165,16 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
       if (error) throw error;
 
-      alert(`User ${currentStatus ? 'deactivated' : 'activated'} successfully!`);
+      showToast({ type: 'success', title: 'Success', message: `User ${currentStatus ? 'deactivated' : 'activated'} successfully!` });
       onRefresh();
     } catch (error) {
       console.error('Error updating user status:', error);
-      alert('Failed to update user status.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update user status.' });
     }
   };
 
   const deleteUser = async (userId: string, username: string) => {
-    if (!confirm(`Are you sure you want to permanently delete user "${username}"? This action cannot be undone.`)) {
+    if (!await showConfirm({ title: 'Confirm', message: `Are you sure you want to permanently delete user "${username}"? This action cannot be undone.`, variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -171,11 +187,11 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
 
       if (profileError) throw profileError;
 
-      alert('User deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'User deleted successfully!' });
       onRefresh();
     } catch (error) {
       console.error('Error deleting user:', error);
-      alert('Failed to delete user. The user may have associated records.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete user. The user may have associated records.' });
     }
   };
 
@@ -190,7 +206,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
     if (!passwordUser) return;
 
     if (newPassword.length < 6) {
-      alert('Password must be at least 6 characters long');
+      showToast({ type: 'error', title: 'Error', message: 'Password must be at least 6 characters long' });
       return;
     }
 
@@ -221,13 +237,13 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         throw new Error(result.error || 'Failed to update password');
       }
 
-      alert(`Password updated successfully for ${passwordUser.full_name}!`);
+      showToast({ type: 'success', title: 'Success', message: `Password updated successfully for ${passwordUser.full_name}!` });
       setShowPasswordModal(false);
       setPasswordUser(null);
       setNewPassword('');
     } catch (error: any) {
       console.error('Error changing password:', error);
-      alert(error.message || 'Failed to change password. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to change password. Please try again.' });
     } finally {
       setLoading(false);
     }
@@ -243,9 +259,16 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         return 'bg-green-100 text-green-800 border-green-300';
       case 'warehouse':
         return 'bg-orange-100 text-orange-800 border-orange-300';
+      case 'auditor_ca':
+        return 'bg-gray-100 text-gray-800 border-gray-300';
       default:
         return 'bg-gray-100 text-gray-800 border-gray-300';
     }
+  };
+
+  const formatRoleDisplay = (role: string) => {
+    if (role === 'auditor_ca') return 'Auditor CA';
+    return role.charAt(0).toUpperCase() + role.slice(1);
   };
 
   return (
@@ -303,15 +326,15 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
                     {user.email}
                   </p>
                   <p className="text-xs text-gray-400 mt-0.5">
-                    Created: {new Date(user.created_at).toLocaleDateString()}
+                    Created: {formatDate(user.created_at)}
                   </p>
                 </div>
               </div>
 
               <div className="flex items-center gap-3">
-                <span className={`px-3 py-1 border rounded-full text-xs font-medium capitalize flex items-center gap-1.5 ${getRoleBadgeColor(user.role)}`}>
+                <span className={`px-3 py-1 border rounded-full text-xs font-medium flex items-center gap-1.5 ${getRoleBadgeColor(user.role)}`}>
                   <Briefcase className="w-3 h-3" />
-                  {user.role}
+                  {formatRoleDisplay(user.role)}
                 </span>
 
                 <button
@@ -472,6 +495,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               <option value="sales">Sales - CRM, customers, and sales invoices</option>
               <option value="accounts">Accounts - Finance and invoicing</option>
               <option value="warehouse">Warehouse - Inventory management</option>
+              <option value="auditor_ca">Auditor CA - Read-only financial access</option>
               <option value="admin">Admin - Full system access</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
@@ -535,9 +559,9 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
         title="Edit User"
       >
         <form onSubmit={handleEditUser} className="space-y-4">
-          <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 mb-4">
-            <p className="text-sm text-amber-800">
-              Editing user profile. Email cannot be changed. To reset password, user must use password reset feature.
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+            <p className="text-sm text-blue-800">
+              You can edit all user details including email. To reset password, use the password reset button from the user list.
             </p>
           </div>
 
@@ -578,16 +602,18 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
           <div>
             <label className="block text-sm font-medium text-gray-700 mb-1 flex items-center gap-1.5">
               <Mail className="w-4 h-4" />
-              Email Address
+              Email Address <span className="text-red-500">*</span>
             </label>
             <input
               type="email"
               value={formData.email}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg bg-gray-50 text-gray-500 cursor-not-allowed"
-              disabled
+              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              placeholder="john@example.com"
+              required
             />
             <p className="text-xs text-gray-500 mt-1">
-              Email cannot be changed
+              Email address can now be updated
             </p>
           </div>
 
@@ -605,6 +631,7 @@ export function UserManagement({ users, onRefresh }: UserManagementProps) {
               <option value="sales">Sales - CRM, customers, and sales invoices</option>
               <option value="accounts">Accounts - Finance and invoicing</option>
               <option value="warehouse">Warehouse - Inventory management</option>
+              <option value="auditor_ca">Auditor CA - Read-only financial access</option>
               <option value="admin">Admin - Full system access</option>
             </select>
             <p className="text-xs text-gray-500 mt-1">
