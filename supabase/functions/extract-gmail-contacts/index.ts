@@ -53,23 +53,29 @@ async function extractContactsBatchWithAI(
   const results = new Map<string, Partial<ExtractedContact>>();
 
   const emailList = emails.map((e, i) =>
-    `[${i + 1}] FROM: ${e.email} | NAME: ${e.name || 'N/A'} | SUBJECT: ${e.subject.substring(0, 80)} | BODY: ${e.body.substring(0, 600)}`
-  ).join('\n\n');
+    `[${i + 1}] FROM: ${e.email} | NAME: ${e.name || 'N/A'} | SUBJECT: ${e.subject.substring(0, 80)} | BODY_SNIPPET: ${e.body.substring(0, 700)}`
+  ).join('\n\n---\n\n');
 
-  const prompt = `Extract company/contact info from these ${emails.length} emails. Return ONLY a JSON array with exactly ${emails.length} objects (one per email, in order).
+  const prompt = `You are extracting business contact info from ${emails.length} emails. Return ONLY a JSON array with exactly ${emails.length} objects (one per email, in order).
 
 Emails:
 ${emailList}
 
 Rules:
-- companyName: Extract from signature or domain. For .co.id add "PT " prefix if missing. Empty string if unclear or generic (gmail/yahoo/hotmail).
-- customerName: From signature or From name.
-- phone/mobile: From signature only.
-- website: Company website from signature.
-- confidence: 0.8-1.0 for clear company, 0.5-0.7 domain-derived, 0.0-0.4 unclear.
-- NEVER use greeting text or email body content for company name.
+- companyName: Extract from email signature, domain, or company letterhead. For Indonesian domains (.co.id, .id) add "PT " prefix if missing and not already there. If domain is gmail/yahoo/hotmail/outlook but signature has company name, use that company name. Leave empty string ONLY if truly no company info found anywhere.
+- customerName: The real person's name from the signature or "From" name. NOT greetings. NOT "Dear Sir".
+- phone: Landline phone from signature (e.g. 021-xxx, +62-21-xxx). Empty if not found.
+- mobile: Mobile/cell phone from signature (e.g. 08xx, +62-8xx, WhatsApp numbers). Empty if not found.
+- website: Company website URL from signature. Empty if not found.
+- confidence: 0.9 if company name clearly in signature; 0.7 if derived from corporate domain; 0.5 if gmail/yahoo but has real name; 0.3 if completely unclear.
 
-Return JSON array (no markdown):
+CRITICAL:
+- DO NOT use greeting text (Dear, Hi, Hello) as customerName
+- DO NOT use email body paragraphs as company name
+- For gmail/yahoo users who sign with their real name and company, EXTRACT that company name
+- Return valid JSON array only, no markdown, no explanation
+
+Return format (${emails.length} objects):
 [{"companyName":"","customerName":"","phone":"","mobile":"","website":"","confidence":0.0}, ...]`;
 
   try {
@@ -82,16 +88,16 @@ Return JSON array (no markdown):
       body: JSON.stringify({
         model: 'gpt-3.5-turbo',
         messages: [
-          { role: 'system', content: 'You are a data extraction assistant. Return ONLY valid JSON arrays, no markdown.' },
+          { role: 'system', content: 'You are a data extraction assistant. Return ONLY valid JSON arrays, no markdown, no explanation.' },
           { role: 'user', content: prompt }
         ],
         temperature: 0.1,
-        max_tokens: 200 * emails.length,
+        max_tokens: 250 * emails.length,
       }),
     });
 
     if (!response.ok) {
-      console.error('OpenAI batch error:', response.status);
+      console.error('OpenAI batch error:', response.status, await response.text());
       return results;
     }
 
@@ -106,14 +112,14 @@ Return JSON array (no markdown):
       const item = extracted[i];
       if (!item) continue;
 
-      const isValid = (name: string) => {
-        if (!name || name.length < 3) return false;
-        return !/^(dear|hi|hello|regards|thanks|best|sincerely|thank you|we|i |our|your|the |this|that|it |please|sorry)/i.test(name);
+      const isValidName = (name: string) => {
+        if (!name || name.length < 2) return false;
+        return !/^(dear|hi|hello|regards|thanks|best|sincerely|thank you|we |i |our |your |the |this |that |it |please|sorry|greetings)/i.test(name.trim());
       };
 
       results.set(emails[i].messageId, {
-        companyName: isValid(item.companyName) ? item.companyName : '',
-        customerName: item.customerName || emails[i].name || emails[i].email.split('@')[0],
+        companyName: isValidName(item.companyName) ? item.companyName.trim() : '',
+        customerName: isValidName(item.customerName) ? item.customerName.trim() : (emails[i].name || emails[i].email.split('@')[0]),
         phone: item.phone || '',
         mobile: item.mobile || '',
         website: item.website || '',
@@ -138,10 +144,16 @@ function getEmailBody(message: any): string {
     for (const part of message.payload.parts) {
       if (part.mimeType === 'text/plain' && part.body?.data) {
         body += atob(part.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+      } else if (part.parts) {
+        for (const subpart of part.parts) {
+          if (subpart.mimeType === 'text/plain' && subpart.body?.data) {
+            body += atob(subpart.body.data.replace(/-/g, '+').replace(/_/g, '/'));
+          }
+        }
       }
     }
   }
-  return body.substring(0, 800);
+  return body.substring(0, 1000);
 }
 
 function extractFromHeader(headers: any[]): { email: string; name?: string } | null {
@@ -215,6 +227,30 @@ async function fetchAllGmailMessages(
   return messages;
 }
 
+async function markMessagesProcessed(
+  supabase: any,
+  userId: string,
+  connectionId: string,
+  messageIds: string[],
+  contactsExtracted: number,
+  extractionData: any
+): Promise<void> {
+  const CHUNK = 50;
+  for (let i = 0; i < messageIds.length; i += CHUNK) {
+    const chunk = messageIds.slice(i, i + CHUNK);
+    await supabase.from('gmail_processed_messages').upsert(
+      chunk.map(msgId => ({
+        user_id: userId,
+        connection_id: connectionId,
+        gmail_message_id: msgId,
+        contacts_extracted: contactsExtracted,
+        extraction_data: extractionData,
+      })),
+      { onConflict: 'connection_id,gmail_message_id', ignoreDuplicates: true }
+    );
+  }
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -281,25 +317,44 @@ Deno.serve(async (req: Request) => {
 
     console.log(`Skipped ${skipIds.length}, processing ${emailsToProcess.length} emails in batches of ${BATCH_SIZE}...`);
 
+    // Mark skipped messages as processed immediately
+    if (skipIds.length > 0) {
+      await markMessagesProcessed(supabase, user_id, connection_id, skipIds, 0, null);
+    }
+
     const contactsMap = new Map<string, ExtractedContact>();
-    const processedMessageIds: string[] = [...skipIds];
+    const allProcessedIds: string[] = [];
 
     for (let i = 0; i < emailsToProcess.length; i += BATCH_SIZE) {
       const batch = emailsToProcess.slice(i, i + BATCH_SIZE);
       const batchResults = await extractContactsBatchWithAI(batch, openaiApiKey);
 
+      const batchProcessedIds: string[] = [];
+
       for (const emailData of batch) {
         const result = batchResults.get(emailData.messageId);
         const domain = emailData.email.split('@')[1] || '';
 
-        if (result && result.confidence && result.confidence >= 0.5) {
-          const companyKey = isGenericDomain(domain) ? emailData.email : domain;
+        // Mark ALL emails as processed (regardless of confidence)
+        // This prevents them from showing up again next run
+        batchProcessedIds.push(emailData.messageId);
+        allProcessedIds.push(emailData.messageId);
+
+        if (result && result.confidence && result.confidence >= 0.4) {
+          // For generic domains (gmail etc), use the email as key to avoid merging unrelated contacts
+          const companyKey = isGenericDomain(domain)
+            ? (result.companyName ? result.companyName.toLowerCase() : emailData.email)
+            : domain;
+
           const existing = contactsMap.get(companyKey);
 
           if (existing) {
             if (!existing.emailIds.includes(emailData.email)) existing.emailIds.push(emailData.email);
             existing.confidence = Math.max(existing.confidence, result.confidence);
             if (!existing.companyName && result.companyName) existing.companyName = result.companyName;
+            if (!existing.phone && result.phone) existing.phone = result.phone;
+            if (!existing.mobile && result.mobile) existing.mobile = result.mobile;
+            if (!existing.website && result.website) existing.website = result.website;
           } else {
             contactsMap.set(companyKey, {
               companyName: result.companyName || '',
@@ -313,39 +368,18 @@ Deno.serve(async (req: Request) => {
               confidence: result.confidence,
             });
           }
-
-          await supabase.from('gmail_processed_messages').insert({
-            user_id: user_id,
-            connection_id: connection_id,
-            gmail_message_id: emailData.messageId,
-            contacts_extracted: 1,
-            extraction_data: result
-          }).then(() => {});
-        } else {
-          processedMessageIds.push(emailData.messageId);
         }
       }
+
+      // Mark batch as processed using upsert to handle unique constraint
+      await markMessagesProcessed(supabase, user_id, connection_id, batchProcessedIds, 1, null);
 
       console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1}/${Math.ceil(emailsToProcess.length / BATCH_SIZE)} done. Contacts so far: ${contactsMap.size}`);
     }
 
-    if (processedMessageIds.length > 0) {
-      const CHUNK = 100;
-      for (let i = 0; i < processedMessageIds.length; i += CHUNK) {
-        await supabase.from('gmail_processed_messages').insert(
-          processedMessageIds.slice(i, i + CHUNK).map(msgId => ({
-            user_id: user_id,
-            connection_id: connection_id,
-            gmail_message_id: msgId,
-            contacts_extracted: 0,
-            extraction_data: null
-          }))
-        );
-      }
-    }
-
+    // Include contacts with just a customer name (no company) if confidence >= 0.5
     const contacts = Array.from(contactsMap.values())
-      .filter(c => c.companyName && c.companyName.length > 2 && c.confidence >= 0.5)
+      .filter(c => (c.companyName?.length > 1 || c.confidence >= 0.6) && c.customerName)
       .map(c => ({ ...c, emailIds: c.emailIds.join('; ') }));
 
     console.log(`Done. ${contacts.length} contacts from ${messages.length} emails`);
@@ -356,7 +390,7 @@ Deno.serve(async (req: Request) => {
         total_emails_scanned: messages.length,
         total_contacts: contacts.length,
         contacts,
-        message: `Processed ${messages.length} emails and extracted ${contacts.length} contacts`
+        message: `Processed ${messages.length} new emails and extracted ${contacts.length} contacts`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

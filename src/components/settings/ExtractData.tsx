@@ -23,7 +23,7 @@ export function ExtractData() {
   const [clearing, setClearing] = useState(false);
   const [loading, setLoading] = useState(true);
   const [contacts, setContacts] = useState<ExtractedContact[]>([]);
-  const [stats, setStats] = useState<{ total_emails: number; total_contacts: number } | null>(null);
+  const [stats, setStats] = useState<{ total_emails: number; total_contacts: number; new_contacts: number } | null>(null);
   const [selectedContacts, setSelectedContacts] = useState<Set<number>>(new Set());
   const [extractAll, setExtractAll] = useState(true);
   const [maxEmails, setMaxEmails] = useState(500);
@@ -127,7 +127,8 @@ export function ExtractData() {
       }
 
       if (result.success) {
-        // Save new contacts to database
+        let newContactsCount = 0;
+
         if (result.contacts && result.contacts.length > 0) {
           const contactsToInsert = result.contacts.map((contact: any) => ({
             user_id: user.id,
@@ -143,9 +144,10 @@ export function ExtractData() {
             extracted_at: new Date().toISOString(),
           }));
 
-          const { error: insertError } = await supabase
+          const { data: inserted, error: insertError } = await supabase
             .from('extracted_contacts')
-            .insert(contactsToInsert);
+            .insert(contactsToInsert)
+            .select();
 
           if (insertError) {
             console.error('Error saving contacts:', insertError);
@@ -153,17 +155,18 @@ export function ExtractData() {
             return;
           }
 
-          // Reload all contacts from database
+          newContactsCount = inserted?.length || 0;
           await loadSavedContacts();
         }
 
         setStats({
           total_emails: result.total_emails_scanned || result.total_emails,
           total_contacts: result.total_contacts,
+          new_contacts: newContactsCount,
         });
 
         if (result.message) {
-          alert(`Success! ${result.message}\n\nContacts saved to database and will persist across refreshes.`);
+          alert(`Success! ${result.message}\n\n${newContactsCount} new contacts added to your list.`);
         }
       } else {
         throw new Error(result.error || 'Failed to extract contacts');
@@ -426,10 +429,10 @@ export function ExtractData() {
                   AI Extraction completed successfully!
                 </p>
                 <p className="text-xs text-blue-700 mt-1">
-                  AI processed {stats.total_emails} NEW unprocessed emails and extracted {stats.total_contacts} high-quality contacts
+                  Scanned {stats.total_emails} new emails &mdash; extracted {stats.total_contacts} contacts &mdash; <strong>{stats.new_contacts} newly added</strong> to your list
                 </p>
                 <p className="text-xs text-blue-600 mt-1">
-                  Click "Extract Contacts" again to process the next batch of NEW emails
+                  Click "Extract Contacts" again to process the next batch of unprocessed emails
                 </p>
               </div>
             </div>
