@@ -2,11 +2,15 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
+import { useFinance } from '../contexts/FinanceContext';
 import { Layout } from '../components/Layout';
 import { FileText, Plus, Search, Filter, Eye, Edit, Trash2, XCircle, FileCheck, CheckCircle, Paperclip, Download, ExternalLink } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import SalesOrderForm from '../components/SalesOrderForm';
 import { ProformaInvoiceView } from '../components/ProformaInvoiceView';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { formatDate } from '../utils/dateFormat';
 
 interface Customer {
   id: string;
@@ -64,6 +68,7 @@ interface SalesOrder {
 export default function SalesOrders() {
   const { user, profile } = useAuth();
   const { t } = useLanguage();
+  const { dateRange } = useFinance();
   const [activeTab, setActiveTab] = useState<'active' | 'archived'>('active');
   const [salesOrders, setSalesOrders] = useState<SalesOrder[]>([]);
   const [filteredOrders, setFilteredOrders] = useState<SalesOrder[]>([]);
@@ -78,6 +83,8 @@ export default function SalesOrders() {
   const [orderToReject, setOrderToReject] = useState<string | null>(null);
   const [showPOModal, setShowPOModal] = useState(false);
   const [selectedPOUrl, setSelectedPOUrl] = useState<string | null>(null);
+  const [poBlobUrl, setPoBlobUrl] = useState<string | null>(null);
+  const [poLoading, setPoLoading] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [archiveReason, setArchiveReason] = useState('');
   const [orderToArchive, setOrderToArchive] = useState<string | null>(null);
@@ -87,7 +94,7 @@ export default function SalesOrders() {
   useEffect(() => {
     fetchSalesOrders();
     fetchCustomers();
-  }, [activeTab]);
+  }, [activeTab, dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
     filterOrders();
@@ -138,13 +145,17 @@ export default function SalesOrders() {
         query = query.eq('is_archived', true);
       }
 
+      query = query
+        .gte('so_date', dateRange.startDate)
+        .lte('so_date', dateRange.endDate);
+
       const { data, error } = await query.order('created_at', { ascending: false });
 
       if (error) throw error;
       setSalesOrders(data || []);
     } catch (error: any) {
       console.error('Error fetching sales orders:', error.message);
-      alert('Failed to load sales orders');
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToLoadSalesOrders') });
     } finally {
       setLoading(false);
     }
@@ -192,17 +203,17 @@ export default function SalesOrders() {
 
   const getStatusBadge = (status: string) => {
     const statusConfig: Record<string, { color: string; label: string }> = {
-      draft: { color: 'bg-gray-100 text-gray-800', label: 'Draft' },
-      pending_approval: { color: 'bg-yellow-100 text-yellow-800', label: 'Pending Approval' },
-      approved: { color: 'bg-green-100 text-green-800', label: 'Approved' },
-      rejected: { color: 'bg-red-100 text-red-800', label: 'Rejected' },
-      stock_reserved: { color: 'bg-blue-100 text-blue-800', label: 'Stock Reserved' },
+      draft: { color: 'bg-gray-100 text-gray-800', label: t('common.draft') },
+      pending_approval: { color: 'bg-yellow-100 text-yellow-800', label: t('common.pending') },
+      approved: { color: 'bg-green-100 text-green-800', label: t('common.approved') },
+      rejected: { color: 'bg-red-100 text-red-800', label: t('common.rejected') },
+      stock_reserved: { color: 'bg-blue-100 text-blue-800', label: t('stock.reserved') },
       shortage: { color: 'bg-orange-100 text-orange-800', label: 'Shortage' },
       pending_delivery: { color: 'bg-purple-100 text-purple-800', label: 'Pending Delivery' },
       partially_delivered: { color: 'bg-indigo-100 text-indigo-800', label: 'Partially Delivered' },
       delivered: { color: 'bg-teal-100 text-teal-800', label: 'Delivered' },
       closed: { color: 'bg-gray-100 text-gray-800', label: 'Closed' },
-      cancelled: { color: 'bg-red-100 text-red-800', label: 'Cancelled' },
+      cancelled: { color: 'bg-red-100 text-red-800', label: t('common.cancelled') },
     };
 
     const config = statusConfig[status] || { color: 'bg-gray-100 text-gray-800', label: status };
@@ -214,7 +225,7 @@ export default function SalesOrders() {
   };
 
   const handleSubmitForApproval = async (orderId: string) => {
-    if (!confirm('Submit this sales order for approval?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: t('salesOrders.submitForApproval') + '?', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -224,17 +235,17 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order submitted for approval successfully!');
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderSubmitted') });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error submitting for approval:', error.message);
-      alert('Failed to submit for approval');
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToUpdate') });
     }
   };
 
   const handleArchiveOrder = async () => {
     if (!orderToArchive || !archiveReason.trim()) {
-      alert('Please enter an archive reason');
+      showToast({ type: 'error', title: 'Error', message: t('validation.enterArchiveReason') });
       return;
     }
 
@@ -255,19 +266,19 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order archived successfully!');
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderArchived') });
       setShowArchiveModal(false);
       setArchiveReason('');
       setOrderToArchive(null);
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error archiving order:', error.message);
-      alert('Failed to archive order');
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToUpdate') });
     }
   };
 
   const handleUnarchiveOrder = async (orderId: string) => {
-    if (!confirm('Unarchive this sales order?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: t('common.unarchive') + '?', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -283,11 +294,11 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order unarchived successfully!');
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderUnarchived') });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error unarchiving order:', error.message);
-      alert('Failed to unarchive order');
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToUpdate') });
     }
   };
 
@@ -307,16 +318,16 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order cancelled successfully!');
+      showToast({ type: 'success', title: 'Success', message: t('success.salesOrderCancelled') });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error cancelling order:', error.message);
-      alert('Failed to cancel order');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to cancel order' });
     }
   };
 
   const handleDeleteOrder = async (orderId: string) => {
-    if (!confirm('Are you sure you want to delete this sales order?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this sales order?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -326,11 +337,11 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: 'Sales order deleted successfully!' });
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error deleting order:', error.message);
-      alert('Failed to delete order');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete order' });
     }
   };
 
@@ -345,7 +356,7 @@ export default function SalesOrders() {
   };
 
   const handleApproveOrder = async (orderId: string) => {
-    if (!confirm('Approve this sales order? Stock will be reserved automatically.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this sales order? Stock will be reserved automatically.', variant: 'warning' })) return;
 
     try {
       const { data: { user } } = await supabase.auth.getUser();
@@ -371,28 +382,35 @@ export default function SalesOrders() {
       if (reserveError) {
         console.error('Error reserving stock:', reserveError);
         console.error('Supabase request failed', reserveError);
-        alert('Order approved but stock reservation failed: ' + reserveError.message);
+        showToast({ type: 'warning', title: 'Warning', message: 'Order approved but stock reservation failed: ' + reserveError.message });
       } else if (reserveResult && reserveResult.length > 0) {
         const result = reserveResult[0];
         if (result.success) {
-          alert('✅ Sales order approved and stock fully reserved!');
+          showToast({ type: 'success', title: 'Success', message: 'Sales order approved and stock fully reserved!' });
         } else {
-          alert('⚠️ Order approved with stock shortage.\n\n' + result.message + '\n\nImport requirements have been created automatically.');
+          showToast({ type: 'warning', title: 'Warning', message: 'Order approved with stock shortage.\n\n' + result.message + '\n\nImport requirements have been created automatically.' });
         }
       } else {
-        alert('Sales order approved!');
+        showToast({ type: 'success', title: 'Success', message: 'Sales order approved!' });
       }
 
       fetchSalesOrders();
-    } catch (error: any) {
-      console.error('Error approving order:', error.message);
-      alert('Failed to approve order');
+
+      // Fire email notification (non-blocking — don't fail if it errors)
+      supabase.functions.invoke('send-app-notifications', {
+        body: { type: 'so_approved', data: { so_id: orderId } }
+      }).catch(() => {});
+
+    } catch (error: unknown) {
+      const msg = error instanceof Error ? error.message : 'Unknown error';
+      console.error('Error approving order:', msg);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to approve order' });
     }
   };
 
   const handleRejectOrder = async () => {
     if (!orderToReject || !rejectionReason.trim()) {
-      alert('Please enter a rejection reason');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter a rejection reason' });
       return;
     }
 
@@ -413,20 +431,32 @@ export default function SalesOrders() {
 
       if (error) throw error;
 
-      alert('Sales order rejected');
+      showToast({ type: 'success', title: 'Success', message: 'Sales order rejected' });
       setShowRejectModal(false);
       setRejectionReason('');
       setOrderToReject(null);
       fetchSalesOrders();
     } catch (error: any) {
       console.error('Error rejecting order:', error.message);
-      alert('Failed to reject order');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to reject order' });
     }
   };
 
-  const handleViewPO = (poUrl: string) => {
+  const handleViewPO = async (poUrl: string) => {
     setSelectedPOUrl(poUrl);
     setShowPOModal(true);
+    setPoLoading(true);
+    setPoBlobUrl(null);
+    try {
+      const res = await fetch(poUrl);
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      setPoBlobUrl(blobUrl);
+    } catch {
+      setPoBlobUrl(null);
+    } finally {
+      setPoLoading(false);
+    }
   };
 
   const stats = {
@@ -503,7 +533,7 @@ export default function SalesOrders() {
       </div>
 
       <div className="bg-white rounded-lg shadow mb-6">
-        <div className="p-4 border-b flex gap-4">
+        <div className="p-4 border-b flex flex-col md:flex-row gap-4">
           <div className="flex-1 relative">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
             <input
@@ -572,13 +602,13 @@ export default function SalesOrders() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{order.customer_po_number}</div>
-                      <div className="text-xs text-gray-500">{new Date(order.customer_po_date).toLocaleDateString()}</div>
+                      <div className="text-xs text-gray-500">{formatDate(order.customer_po_date)}</div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {new Date(order.so_date).toLocaleDateString()}
+                      {formatDate(order.so_date)}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {order.expected_delivery_date ? new Date(order.expected_delivery_date).toLocaleDateString() : '-'}
+                      {order.expected_delivery_date ? formatDate(order.expected_delivery_date) : '-'}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                       {formatCurrency(order.total_amount, order.currency || 'IDR')}
@@ -834,26 +864,56 @@ export default function SalesOrders() {
           onClose={() => {
             setShowPOModal(false);
             setSelectedPOUrl(null);
+            if (poBlobUrl) { URL.revokeObjectURL(poBlobUrl); setPoBlobUrl(null); }
           }}
           title="Customer Purchase Order"
+          size="xl"
         >
-          <div className="space-y-3">
-            <a
-              href={selectedPOUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-3 p-4 bg-gray-50 rounded-lg border border-gray-200 hover:bg-blue-50 hover:border-blue-300 transition"
-            >
-              <FileText className="w-6 h-6 text-blue-600 flex-shrink-0" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-gray-900">Customer Purchase Order</p>
-                <p className="text-xs text-gray-500 mt-1">Click to open in new tab</p>
-              </div>
-              <ExternalLink className="w-5 h-5 text-gray-400 flex-shrink-0" />
-            </a>
-            <div className="text-xs text-gray-500 text-center pt-2">
-              Document opens in a new browser tab
+          <div className="flex flex-col gap-2" style={{ height: '75vh' }}>
+            <div className="flex justify-end">
+              <a
+                href={selectedPOUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-blue-600 border border-blue-200 rounded-lg hover:bg-blue-50 transition"
+              >
+                <ExternalLink className="w-3.5 h-3.5" />
+                Open in new tab
+              </a>
             </div>
+            {poLoading && (
+              <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200">
+                <div className="text-center text-gray-500">
+                  <div className="w-8 h-8 border-2 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
+                  <p className="text-sm">Loading document...</p>
+                </div>
+              </div>
+            )}
+            {!poLoading && poBlobUrl && (
+              <iframe
+                src={poBlobUrl}
+                className="flex-1 w-full rounded-lg border border-gray-200"
+                title="Customer Purchase Order"
+              />
+            )}
+            {!poLoading && !poBlobUrl && (
+              <div className="flex-1 flex items-center justify-center bg-gray-50 rounded-lg border border-gray-200">
+                <div className="text-center text-gray-500 px-6">
+                  <FileText className="w-10 h-10 mx-auto mb-3 text-gray-400" />
+                  <p className="text-sm font-medium mb-1">Preview not available</p>
+                  <p className="text-xs text-gray-400 mb-4">The document cannot be displayed inline</p>
+                  <a
+                    href={selectedPOUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Open document
+                  </a>
+                </div>
+              </div>
+            )}
           </div>
         </Modal>
       )}

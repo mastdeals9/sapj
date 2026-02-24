@@ -1,20 +1,24 @@
-import { useEffect, useState } from 'react';
-import { Layout } from '../components/Layout';
+import { useEffect, useState, type ElementType } from 'react';
+import { Layout, getRandomFallbackQuote, Quote } from '../components/Layout';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
 import { supabase } from '../lib/supabase';
 import { TodaysActionsDashboard } from '../components/commandCenter/TodaysActionsDashboard';
+import { RevenueChart } from '../components/dashboard/RevenueChart';
+import { SalesPipelineChart } from '../components/dashboard/SalesPipelineChart';
+import { PaymentOverview } from '../components/dashboard/PaymentOverview';
 import {
-  Package,
   AlertTriangle,
   Clock,
-  Users,
-  DollarSign,
   TrendingUp,
-  Bell,
   FileText,
   ClipboardCheck,
+  ClipboardList,
+  Zap,
+  UserCircle,
+  ArrowRight,
+  Sparkles,
 } from 'lucide-react';
 
 interface DashboardStats {
@@ -52,9 +56,11 @@ export function Dashboard() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [quote, setQuote] = useState<Quote>({ content: 'Welcome back!', author: '' });
 
   useEffect(() => {
     loadDashboardData();
+    setQuote(getRandomFallbackQuote());
   }, []);
 
   const loadDashboardData = async () => {
@@ -119,7 +125,6 @@ export function Dashboard() {
 
       const estimatedProfit = totalRevenue - (totalSubtotal * 0.7);
 
-      // Calculate overdue amounts
       const overdueInvoicesWithBalances = await Promise.all(
         (overdueInvoicesResult.data || []).map(async (inv) => {
           const { data: paidData } = await supabase
@@ -152,30 +157,25 @@ export function Dashboard() {
     }
   };
 
-  const baseStatCards = [
-    {
-      title: t('dashboard.lowStock'),
-      value: stats.lowStockItems,
-      icon: AlertTriangle,
-      color: 'orange',
-    },
-    {
-      title: t('dashboard.nearExpiry'),
-      value: stats.nearExpiryBatches,
-      icon: Clock,
-      color: 'red',
-    },
-    {
-      title: t('dashboard.salesThisMonth'),
-      value: stats.salesThisMonth,
-      icon: TrendingUp,
-      color: 'blue',
-    },
-  ];
+  const role = profile?.role;
+  const isAdmin = role === 'admin';
+  const isAccounts = role === 'accounts';
+  const isSales = role === 'sales';
+  const isWarehouse = role === 'warehouse';
+  const isAuditor = role === 'auditor_ca';
 
-  const approvalCards = [];
-  if (profile?.role === 'admin' || profile?.role === 'accounts') {
-    approvalCards.push({
+  interface StatCard {
+    title: string;
+    value: number;
+    subtitle?: string;
+    icon: ElementType;
+    color: string;
+    link?: string;
+  }
+  const statCards: StatCard[] = [];
+
+  if (isAdmin || isAccounts || isAuditor) {
+    statCards.push({
       title: 'Overdue Invoices',
       value: stats.overdueInvoicesCount,
       subtitle: `Rp ${stats.overdueInvoicesAmount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
@@ -184,26 +184,58 @@ export function Dashboard() {
       link: 'sales'
     });
   }
-  if (profile?.role === 'admin' || profile?.role === 'sales') {
-    approvalCards.push({
-      title: 'Pending PO Approvals',
-      value: stats.pendingSalesOrders,
-      icon: FileText,
+  if (isAdmin || isSales) {
+    const totalApprovals = stats.pendingSalesOrders + stats.pendingDeliveryChallans;
+    statCards.push({
+      title: 'Approvals Pending',
+      value: totalApprovals,
+      subtitle: `${stats.pendingSalesOrders} PO, ${stats.pendingDeliveryChallans} DC`,
+      icon: ClipboardCheck,
       color: 'yellow',
       link: 'sales-orders'
     });
   }
-  if (profile?.role === 'admin') {
-    approvalCards.push({
-      title: 'Pending DC Approvals',
-      value: stats.pendingDeliveryChallans,
-      icon: ClipboardCheck,
-      color: 'yellow',
-      link: 'delivery-challan'
+  if (isAdmin || isAccounts || isAuditor) {
+    statCards.push({
+      title: t('dashboard.salesThisMonth'),
+      value: stats.salesThisMonth,
+      icon: TrendingUp,
+      color: 'blue',
+      link: 'sales',
     });
   }
-
-  const statCards = [...approvalCards, ...baseStatCards];
+  if (isAdmin || isWarehouse) {
+    statCards.push({
+      title: t('dashboard.lowStock'),
+      value: stats.lowStockItems,
+      icon: AlertTriangle,
+      color: 'orange',
+      link: 'stock',
+    });
+    statCards.push({
+      title: t('dashboard.nearExpiry'),
+      value: stats.nearExpiryBatches,
+      icon: Clock,
+      color: 'red',
+      link: 'batches',
+    });
+  }
+  if (isSales) {
+    statCards.push({
+      title: 'Pending Follow-ups',
+      value: stats.pendingFollowUps,
+      icon: Clock,
+      color: 'orange',
+      link: 'crm',
+    });
+    statCards.push({
+      title: 'Total Customers',
+      value: stats.totalCustomers,
+      icon: UserCircle,
+      color: 'blue',
+      link: 'customers',
+    });
+  }
 
   const colorClasses: Record<string, { bg: string; text: string; icon: string }> = {
     blue: { bg: 'bg-blue-50', text: 'text-blue-600', icon: 'bg-blue-100' },
@@ -212,16 +244,45 @@ export function Dashboard() {
     'red-gradient': { bg: 'bg-gradient-to-br from-red-500 to-orange-500', text: 'text-white', icon: 'bg-white/20' },
     green: { bg: 'bg-green-50', text: 'text-green-600', icon: 'bg-green-100' },
     emerald: { bg: 'bg-emerald-50', text: 'text-emerald-600', icon: 'bg-emerald-100' },
-    purple: { bg: 'bg-purple-50', text: 'text-purple-600', icon: 'bg-purple-100' },
     yellow: { bg: 'bg-yellow-50', text: 'text-yellow-600', icon: 'bg-yellow-100' },
   };
 
+  const quickLinks: { label: string; page: string; icon: ElementType; color: string }[] = [];
+  if (isAdmin || isSales) {
+    quickLinks.push({ label: 'Go to Command Center', page: 'command-center', icon: Zap, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' });
+    quickLinks.push({ label: 'View All Inquiries', page: 'crm', icon: UserCircle, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+    quickLinks.push({ label: 'Sales Orders', page: 'sales-orders', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+  }
+  if (isAccounts) {
+    quickLinks.push({ label: 'Finance Module', page: 'finance', icon: FileText, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' });
+    quickLinks.push({ label: 'Receivables', page: 'finance', icon: TrendingUp, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+    quickLinks.push({ label: 'Sales Invoices', page: 'sales', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+  }
+  if (isWarehouse) {
+    quickLinks.push({ label: 'Stock Management', page: 'stock', icon: ClipboardCheck, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' });
+    quickLinks.push({ label: 'Delivery Challans', page: 'delivery-challan', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+    quickLinks.push({ label: 'Inventory', page: 'inventory', icon: AlertTriangle, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+  }
+  if (isAuditor) {
+    quickLinks.push({ label: 'Sales Invoices', page: 'sales', icon: FileText, color: 'bg-blue-50 hover:bg-blue-100 text-blue-700' });
+    quickLinks.push({ label: 'Finance Module', page: 'finance', icon: FileText, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+    quickLinks.push({ label: 'Purchase Orders', page: 'purchase-orders', icon: ClipboardList, color: 'bg-gray-50 hover:bg-gray-100 text-gray-700' });
+  }
+
   return (
     <Layout>
-      <div className="space-y-6">
-        <div>
-          <h1 className="text-3xl font-bold text-gray-900">{t('dashboard.title')}</h1>
-          <p className="text-gray-600 mt-1">Welcome to your pharma trading management system</p>
+      <div className="space-y-4">
+        <div className="bg-gradient-to-r from-blue-50 to-indigo-50 rounded-xl p-4 border border-blue-100">
+          <h1 className="text-2xl font-bold text-gray-900">
+            Welcome, {profile?.full_name || profile?.username || 'User'}!
+          </h1>
+          <div className="flex items-start gap-2 mt-2">
+            <Sparkles className="w-4 h-4 text-yellow-500 flex-shrink-0 mt-0.5" />
+            <p className="text-sm text-gray-600 italic">
+              "{quote.content}"
+              {quote.author && <span className="text-gray-500"> — {quote.author}</span>}
+            </p>
+          </div>
         </div>
 
         {error ? (
@@ -245,57 +306,87 @@ export function Dashboard() {
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 md:gap-4">
-            {statCards.map((card:any, index) => {
-              const Icon = card.icon;
-              const colors = colorClasses[card.color];
-              const isClickable = !!card.link;
-              return (
-                <div
-                  key={index}
-                  className={`${colors.bg} rounded-lg shadow p-3 md:p-4 transition hover:shadow-lg ${isClickable ? 'cursor-pointer' : ''}`}
-                  onClick={() => isClickable && setCurrentPage(card.link)}
-                >
-                  <div className="flex items-center justify-between">
-                    <div className="min-w-0 flex-1">
-                      <p className={`text-xs md:text-sm font-medium ${card.color === 'red-gradient' ? 'text-white/80' : 'text-gray-600'} truncate`}>{card.title}</p>
-                      <p className={`text-xl md:text-2xl font-bold ${colors.text} mt-1`}>
-                        {card.value}
-                      </p>
-                      {card.subtitle && (
-                        <p className={`text-xs mt-0.5 ${card.color === 'red-gradient' ? 'text-white/90' : 'text-gray-500'} truncate`}>
-                          {card.subtitle}
+          <>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-2 md:gap-3">
+              {statCards.map((card: StatCard, index) => {
+                const Icon = card.icon;
+                const colors = colorClasses[card.color];
+                const isClickable = !!card.link;
+                return (
+                  <div
+                    key={index}
+                    className={`${colors.bg} rounded-lg shadow-sm border border-gray-100/50 p-2.5 transition-all hover:shadow-md hover:-translate-y-0.5 ${isClickable ? 'cursor-pointer' : ''}`}
+                    onClick={() => isClickable && setCurrentPage(card.link)}
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="min-w-0 flex-1">
+                        <p className={`text-[10px] font-medium ${card.color === 'red-gradient' ? 'text-white/80' : 'text-gray-600'} truncate`}>{card.title}</p>
+                        <p className={`text-lg md:text-xl font-bold ${colors.text} mt-0.5`}>
+                          {card.value}
                         </p>
-                      )}
-                    </div>
-                    <div className={`${colors.icon} p-2 md:p-3 rounded-full flex-shrink-0 ml-2`}>
-                      <Icon className={`w-4 h-4 md:w-5 md:h-5 ${colors.text}`} />
+                        {card.subtitle && (
+                          <p className={`text-[10px] mt-0.5 ${card.color === 'red-gradient' ? 'text-white/90' : 'text-gray-500'} truncate`}>
+                            {card.subtitle}
+                          </p>
+                        )}
+                      </div>
+                      <div className={`${colors.icon} p-1.5 rounded-full flex-shrink-0 ml-1.5`}>
+                        <Icon className={`w-3.5 h-3.5 ${colors.text}`} />
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+
+            {(isAdmin || isAccounts) && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <RevenueChart />
+                <SalesPipelineChart />
+              </div>
+            )}
+            {isSales && (
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <SalesPipelineChart />
+              </div>
+            )}
+          </>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-          <div className="lg:col-span-2">
-            <TodaysActionsDashboard />
-          </div>
-          <div className="bg-white rounded-lg shadow p-6">
-            <h3 className="text-lg font-semibold text-gray-900 mb-4">Quick Links</h3>
-            <div className="space-y-2">
-              <a href="#" className="block p-3 bg-blue-50 hover:bg-blue-100 rounded-lg transition text-blue-700 font-medium">
-                Go to Command Center
-              </a>
-              <a href="#" className="block p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition text-gray-700 font-medium">
-                View All Inquiries
-              </a>
-              <a href="#" className="block p-3 bg-gray-50 hover:bg-gray-100 rounded-lg transition text-gray-700 font-medium">
-                Create Manual Inquiry
-              </a>
+        <div className={`grid grid-cols-1 ${(isAdmin || isAccounts) ? 'md:grid-cols-2 lg:grid-cols-3' : 'md:grid-cols-2'} gap-4`}>
+          {(isAdmin || isAccounts) && (
+            <div className="md:col-span-1 lg:col-span-1">
+              <PaymentOverview />
             </div>
-          </div>
+          )}
+          {(isAdmin || isSales) && (
+            <div className="md:col-span-1 lg:col-span-1">
+              <TodaysActionsDashboard />
+            </div>
+          )}
+          {quickLinks.length > 0 && (
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-6">
+              <h3 className="text-base font-semibold text-gray-900 mb-4">Quick Links</h3>
+              <div className="space-y-2">
+                {quickLinks.map((link, index) => {
+                  const LinkIcon = link.icon;
+                  return (
+                    <button
+                      key={index}
+                      onClick={() => setCurrentPage(link.page)}
+                      className={`w-full flex items-center justify-between p-3 ${link.color} rounded-lg transition font-medium text-sm group`}
+                    >
+                      <div className="flex items-center gap-2">
+                        <LinkIcon className="w-4 h-4" />
+                        <span>{link.label}</span>
+                      </div>
+                      <ArrowRight className="w-4 h-4 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </Layout>

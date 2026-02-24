@@ -2,14 +2,17 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
 import {
   Plus, Search, Filter, Clock, CheckCircle2, AlertCircle,
   Calendar, User, Tag, Flame, ArrowUp, Minus, Circle,
   MessageSquare, Paperclip, ExternalLink, MoreVertical,
-  Eye, Edit, Trash2
+  Eye, Edit, Trash2, Zap, Bot
 } from 'lucide-react';
 import { TaskDetailModal } from '../components/tasks/TaskDetailModal';
 import { TaskFormModal } from '../components/tasks/TaskFormModal';
+import { SystemTaskService } from '../services/SystemTaskService';
+import { formatDate } from '../utils/dateFormat';
 
 interface Task {
   id: string;
@@ -34,6 +37,15 @@ interface Task {
   inquiry_number?: string;
   customer_name?: string;
   product_name?: string;
+
+  // System task fields
+  task_type?: 'manual' | 'system';
+  task_mode?: 'advisory' | 'enforced';
+  task_origin?: string | null;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  auto_assigned_role?: string | null;
+  auto_priority?: string | null;
 }
 
 interface FilterState {
@@ -41,10 +53,12 @@ interface FilterState {
   priority: string[];
   assignedTo: string[];
   view: 'all' | 'my-tasks' | 'pending' | 'completed' | 'overdue';
+  taskType: 'all' | 'manual' | 'system';
 }
 
 export function Tasks() {
   const { user, profile } = useAuth();
+  const { t } = useLanguage();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [filteredTasks, setFilteredTasks] = useState<Task[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,7 +73,8 @@ export function Tasks() {
     status: [],
     priority: [],
     assignedTo: [],
-    view: 'my-tasks'
+    view: 'my-tasks',
+    taskType: 'all'
   });
 
   const [stats, setStats] = useState({
@@ -147,6 +162,13 @@ export function Tasks() {
   const applyFilters = () => {
     let filtered = [...tasks];
 
+    // Apply task type filter
+    if (filters.taskType === 'system') {
+      filtered = filtered.filter(t => t.task_type === 'system');
+    } else if (filters.taskType === 'manual') {
+      filtered = filtered.filter(t => t.task_type !== 'system');
+    }
+
     // Apply view filter
     if (filters.view === 'my-tasks') {
       filtered = filtered.filter(t =>
@@ -189,7 +211,8 @@ export function Tasks() {
         t.description?.toLowerCase().includes(query) ||
         t.customer_name?.toLowerCase().includes(query) ||
         t.product_name?.toLowerCase().includes(query) ||
-        t.inquiry_number?.toLowerCase().includes(query)
+        t.inquiry_number?.toLowerCase().includes(query) ||
+        SystemTaskService.getOriginLabel(t.task_origin || '').toLowerCase().includes(query)
       );
     }
 
@@ -245,7 +268,7 @@ export function Tasks() {
     } else if (diffDays < 7) {
       return <span className="text-yellow-600 font-medium">Due in {diffDays}d</span>;
     } else {
-      return <span className="text-gray-600">{date.toLocaleDateString()}</span>;
+      return <span className="text-gray-600">{formatDate(date)}</span>;
     }
   };
 
@@ -282,7 +305,7 @@ export function Tasks() {
         {/* Header */}
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Tasks</h1>
+            <h1 className="text-3xl font-bold text-gray-900">{t('tasks.title')}</h1>
             <p className="text-gray-600 mt-1">Manage and track team assignments</p>
           </div>
           <button
@@ -290,7 +313,7 @@ export function Tasks() {
             className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
           >
             <Plus className="w-5 h-5" />
-            New Task
+            {t('tasks.addTask')}
           </button>
         </div>
 
@@ -314,7 +337,7 @@ export function Tasks() {
                 <Clock className="w-6 h-6 text-yellow-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-600">Pending</p>
+                <p className="text-sm text-gray-600">{t('common.pending')}</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.pending}</p>
               </div>
             </div>
@@ -326,7 +349,7 @@ export function Tasks() {
                 <CheckCircle2 className="w-6 h-6 text-green-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-600">Completed</p>
+                <p className="text-sm text-gray-600">{t('common.completed')}</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.completed}</p>
               </div>
             </div>
@@ -338,7 +361,7 @@ export function Tasks() {
                 <AlertCircle className="w-6 h-6 text-red-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-600">Overdue</p>
+                <p className="text-sm text-gray-600">{t('common.overdue')}</p>
                 <p className="text-2xl font-bold text-gray-900">{stats.overdue}</p>
               </div>
             </div>
@@ -348,15 +371,52 @@ export function Tasks() {
         {/* View Tabs and Search */}
         <div className="bg-white rounded-lg border border-gray-200">
           <div className="p-4 border-b border-gray-200">
+            {/* Task Type Filter */}
+            <div className="flex gap-2 mb-4 pb-4 border-b border-gray-200">
+              <button
+                onClick={() => setFilters({ ...filters, taskType: 'all' })}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  filters.taskType === 'all'
+                    ? 'bg-gray-700 text-white'
+                    : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                }`}
+              >
+                <Circle className="w-4 h-4" />
+                {t('tasks.allTasks')}
+              </button>
+              <button
+                onClick={() => setFilters({ ...filters, taskType: 'system' })}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  filters.taskType === 'system'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-blue-50 text-blue-700 hover:bg-blue-100'
+                }`}
+              >
+                <Bot className="w-4 h-4" />
+                System Tasks
+              </button>
+              <button
+                onClick={() => setFilters({ ...filters, taskType: 'manual' })}
+                className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition ${
+                  filters.taskType === 'manual'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-green-50 text-green-700 hover:bg-green-100'
+                }`}
+              >
+                <User className="w-4 h-4" />
+                Manual Tasks
+              </button>
+            </div>
+
             <div className="flex flex-col sm:flex-row gap-4 justify-between">
               {/* View Tabs */}
               <div className="flex gap-2 flex-wrap">
                 {[
-                  { value: 'my-tasks', label: 'My Tasks' },
-                  { value: 'pending', label: 'Pending' },
-                  { value: 'completed', label: 'Completed' },
-                  { value: 'overdue', label: 'Overdue' },
-                  { value: 'all', label: 'All Tasks' }
+                  { value: 'my-tasks', label: t('tasks.myTasks') },
+                  { value: 'pending', label: t('common.pending') },
+                  { value: 'completed', label: t('common.completed') },
+                  { value: 'overdue', label: t('common.overdue') },
+                  { value: 'all', label: t('tasks.allTasks') }
                 ].map(view => (
                   <button
                     key={view.value}
@@ -378,7 +438,7 @@ export function Tasks() {
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
                   <input
                     type="text"
-                    placeholder="Search tasks..."
+                    placeholder={`${t('common.search')}...`}
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
                     className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
@@ -399,7 +459,7 @@ export function Tasks() {
             {showFilters && (
               <div className="mt-4 pt-4 border-t border-gray-200 grid grid-cols-1 sm:grid-cols-3 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">{t('common.status')}</label>
                   <div className="space-y-2">
                     {['to_do', 'in_progress', 'waiting', 'completed'].map(status => (
                       <label key={status} className="flex items-center gap-2">
@@ -422,7 +482,7 @@ export function Tasks() {
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Priority</label>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">{t('tasks.priority')}</label>
                   <div className="space-y-2">
                     {['urgent', 'high', 'medium', 'low'].map(priority => (
                       <label key={priority} className="flex items-center gap-2">
@@ -461,7 +521,7 @@ export function Tasks() {
             {filteredTasks.length === 0 ? (
               <div className="p-12 text-center">
                 <CheckCircle2 className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                <h3 className="text-lg font-medium text-gray-900 mb-2">No tasks found</h3>
+                <h3 className="text-lg font-medium text-gray-900 mb-2">{t('common.noData')}</h3>
                 <p className="text-gray-600 mb-6">
                   {searchQuery || filters.status.length > 0 || filters.priority.length > 0
                     ? 'Try adjusting your filters or search query'
@@ -473,7 +533,7 @@ export function Tasks() {
                     className="inline-flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
                   >
                     <Plus className="w-5 h-5" />
-                    Create Task
+                    {t('tasks.addTask')}
                   </button>
                 )}
               </div>
@@ -496,15 +556,32 @@ export function Tasks() {
 
                       {/* Task Info */}
                       <div className="flex-1 min-w-0">
-                        <div className="flex items-start gap-2">
+                        <div className="flex items-start gap-2 flex-wrap">
                           <h3 className="font-medium text-gray-900 truncate">{task.title}</h3>
                           {task.attachment_urls.length > 0 && (
                             <Paperclip className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                          )}
+                          {task.task_type === 'system' && (
+                            <span className={`inline-flex items-center gap-1 px-2 py-0.5 text-xs font-bold rounded ${
+                              task.task_mode === 'enforced'
+                                ? 'bg-red-600 text-white'
+                                : 'bg-blue-600 text-white'
+                            }`}>
+                              <Bot className="w-3 h-3" />
+                              SYSTEM
+                            </span>
                           )}
                         </div>
 
                         {task.description && (
                           <p className="text-sm text-gray-600 mt-1 line-clamp-2">{task.description}</p>
+                        )}
+
+                        {task.task_origin && task.task_type === 'system' && (
+                          <p className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                            <Zap className="w-3 h-3" />
+                            {SystemTaskService.getOriginLabel(task.task_origin)}
+                          </p>
                         )}
 
                         <div className="flex flex-wrap items-center gap-3 mt-2">

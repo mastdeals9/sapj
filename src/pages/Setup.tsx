@@ -94,11 +94,11 @@ export function Setup() {
           success: true,
           message: `Created successfully (${user.role})`,
         });
-      } catch (error: any) {
+      } catch (error: unknown) {
         newResults.push({
           email: user.email,
           success: false,
-          message: `Error: ${error.message}`,
+          message: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
         });
       }
 

@@ -2,11 +2,15 @@ import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
 import { DataTable } from '../components/DataTable';
 import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { CreditNoteView } from '../components/CreditNoteView';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Eye, Trash2, FileX, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { formatDate } from '../utils/dateFormat';
 
 interface CreditNote {
   id: string;
@@ -305,13 +309,13 @@ export function CreditNotes() {
     e.preventDefault();
 
     if (!formData.customer_id || !formData.reason || items.length === 0) {
-      alert('Please complete all required fields');
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all required fields' });
       return;
     }
 
     const hasInvalidItems = items.some(item => !item.product_id || !item.batch_id || item.quantity <= 0 || item.unit_price <= 0);
     if (hasInvalidItems) {
-      alert('Please complete all item details');
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all item details' });
       return;
     }
 
@@ -341,18 +345,18 @@ export function CreditNotes() {
 
       if (itemsError) throw itemsError;
 
-      alert('Credit note created successfully. Stock has been added back to inventory.');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note created successfully. Stock has been added back to inventory.' });
       setModalOpen(false);
       resetForm();
       loadData();
     } catch (error: any) {
       console.error('Error creating credit note:', error);
-      alert(error.message || 'Failed to create credit note. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to create credit note. Please try again.' });
     }
   };
 
   const handleApprove = async (id: string) => {
-    if (!confirm('Approve this credit note? Stock will be adjusted accordingly.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this credit note? Stock will be adjusted accordingly.', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -364,11 +368,11 @@ export function CreditNotes() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Credit note approved successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note approved successfully' });
       loadData();
     } catch (error: any) {
       console.error('Error approving credit note:', error);
-      alert(error.message || 'Failed to approve credit note');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to approve credit note' });
     }
   };
 
@@ -387,16 +391,16 @@ export function CreditNotes() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Credit note rejected');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note rejected' });
       loadData();
     } catch (error: any) {
       console.error('Error rejecting credit note:', error);
-      alert(error.message || 'Failed to reject credit note');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to reject credit note' });
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this credit note? This will reverse the stock adjustment.')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this credit note? This will reverse the stock adjustment.', variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -408,11 +412,11 @@ export function CreditNotes() {
 
       if (error) throw error;
 
-      alert('Credit note deleted successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Credit note deleted successfully' });
       loadData();
     } catch (error: any) {
       console.error('Error deleting credit note:', error);
-      alert(error.message || 'Failed to delete credit note');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to delete credit note' });
     }
   };
 
@@ -437,32 +441,32 @@ export function CreditNotes() {
     {
       key: 'credit_note_number',
       label: 'Credit Note #',
-      render: (cn: CreditNote) => cn.credit_note_number || 'Pending'
+      render: (value: any, cn: CreditNote) => cn.credit_note_number || 'Pending'
     },
     {
       key: 'credit_note_date',
       label: 'Date',
-      render: (cn: CreditNote) => new Date(cn.credit_note_date).toLocaleDateString()
+      render: (value: any, cn: CreditNote) => formatDate(cn.credit_note_date)
     },
     {
       key: 'customer',
       label: 'Customer',
-      render: (cn: CreditNote) => cn.customers?.company_name || 'N/A'
+      render: (value: any, cn: CreditNote) => cn.customers?.company_name || 'N/A'
     },
     {
       key: 'original_invoice_number',
       label: 'Original Invoice',
-      render: (cn: CreditNote) => cn.original_invoice_number || 'N/A'
+      render: (value: any, cn: CreditNote) => cn.original_invoice_number || 'N/A'
     },
     {
       key: 'total_amount',
       label: 'Amount',
-      render: (cn: CreditNote) => `${cn.currency} ${cn.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2 })}`
+      render: (value: any, cn: CreditNote) => `${cn.currency} ${cn.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2 })}`
     },
     {
       key: 'status',
       label: 'Status',
-      render: (cn: CreditNote) => (
+      render: (value: any, cn: CreditNote) => (
         <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
           cn.status === 'approved' ? 'bg-green-100 text-green-800' :
           cn.status === 'rejected' ? 'bg-red-100 text-red-800' :
@@ -475,7 +479,7 @@ export function CreditNotes() {
     {
       key: 'reason',
       label: 'Reason',
-      render: (cn: CreditNote) => (
+      render: (value: any, cn: CreditNote) => (
         <span className="text-sm text-gray-600 truncate max-w-xs block">
           {cn.reason}
         </span>
@@ -575,19 +579,12 @@ export function CreditNotes() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Customer *
                 </label>
-                <select
+                <SearchableSelect
                   value={formData.customer_id}
-                  onChange={(e) => handleCustomerChange(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500 focus:border-transparent"
-                >
-                  <option value="">Select Customer</option>
-                  {customers.map((customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.company_name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => handleCustomerChange(val)}
+                  options={customers.map(c => ({ value: c.id, label: c.company_name }))}
+                  placeholder="Select Customer"
+                />
               </div>
 
               <div>
@@ -603,7 +600,7 @@ export function CreditNotes() {
                   <option value="">Select Invoice</option>
                   {invoices.map((invoice) => (
                     <option key={invoice.id} value={invoice.id}>
-                      {invoice.invoice_number} - {new Date(invoice.invoice_date).toLocaleDateString()} - Rp {invoice.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {invoice.invoice_number} - {formatDate(invoice.invoice_date)} - Rp {invoice.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </option>
                   ))}
                 </select>

@@ -6,8 +6,10 @@ import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
 import { Plus, TrendingUp, TrendingDown, RefreshCw, RotateCcw, AlertTriangle, Package, CheckCircle, XCircle, Upload } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
 import MaterialReturns from './MaterialReturns';
 import StockRejections from './StockRejections';
+import { formatDate } from '../utils/dateFormat';
 
 type TabType = 'transactions' | 'returns' | 'rejections';
 
@@ -147,7 +149,7 @@ export function Inventory() {
         await loadRejections();
       }
     } catch (err) {
-      setError('Failed to load inventory data. Please try again.');
+      setError(t('errors.failedToLoadInventory'));
     }
     setLoading(false);
   };
@@ -274,10 +276,10 @@ export function Inventory() {
       setModalOpen(false);
       resetForm();
       loadData();
-      alert('Transaction added successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Transaction added successfully' });
     } catch (error) {
       console.error('Error saving transaction:', error);
-      alert('Failed to save transaction. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToSaveTransaction') });
     }
   };
 
@@ -300,10 +302,10 @@ export function Inventory() {
       setModalOpen(false);
       resetForm();
       loadData();
-      alert('Material return created successfully. Awaiting approval.');
+      showToast({ type: 'success', title: 'Success', message: 'Material return created successfully. Awaiting approval.' });
     } catch (error) {
       console.error('Error creating return:', error);
-      alert('Failed to create return. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create return. Please try again.' });
     }
   };
 
@@ -326,10 +328,10 @@ export function Inventory() {
       setModalOpen(false);
       resetForm();
       loadData();
-      alert('Stock rejection created successfully. Awaiting approval.');
+      showToast({ type: 'success', title: 'Success', message: 'Stock rejection created successfully. Awaiting approval.' });
     } catch (error) {
       console.error('Error creating rejection:', error);
-      alert('Failed to create rejection. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to create rejection. Please try again.' });
     }
   };
 
@@ -366,13 +368,13 @@ export function Inventory() {
   const transactionColumns = [
     {
       key: 'transaction_date',
-      label: 'Date',
-      render: (tx: InventoryTransaction) => new Date(tx.transaction_date).toLocaleDateString()
+      label: t('common.date'),
+      render: (value: any, tx: InventoryTransaction) => formatDate(tx.transaction_date)
     },
     {
       key: 'transaction_type',
-      label: 'Type',
-      render: (tx: InventoryTransaction) => (
+      label: t('common.type'),
+      render: (value: any, tx: InventoryTransaction) => (
         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
           tx.transaction_type === 'purchase' ? 'bg-green-100 text-green-800' :
           tx.transaction_type === 'sale' ? 'bg-red-100 text-red-800' :
@@ -387,8 +389,8 @@ export function Inventory() {
     },
     {
       key: 'product',
-      label: 'Product',
-      render: (tx: InventoryTransaction) => (
+      label: t('common.product'),
+      render: (value: any, tx: InventoryTransaction) => (
         <div>
           <div className="font-medium">{tx.products?.product_name}</div>
           <div className="text-xs text-gray-500">{tx.products?.product_code}</div>
@@ -397,13 +399,13 @@ export function Inventory() {
     },
     {
       key: 'batch_number',
-      label: 'Batch',
-      render: (tx: InventoryTransaction) => tx.batches?.batch_number || 'N/A'
+      label: t('common.batch'),
+      render: (value: any, tx: InventoryTransaction) => tx.batches?.batch_number || 'N/A'
     },
     {
       key: 'quantity',
-      label: 'Quantity',
-      render: (tx: InventoryTransaction) => (
+      label: t('common.quantity'),
+      render: (value: any, tx: InventoryTransaction) => (
         <span className={`font-semibold ${
           tx.transaction_type === 'purchase' ? 'text-green-600' :
           tx.transaction_type === 'sale' ? 'text-red-600' :
@@ -417,7 +419,7 @@ export function Inventory() {
     {
       key: 'reference_number',
       label: 'Reference',
-      render: (tx: InventoryTransaction) => tx.reference_number || (tx.transaction_type === 'purchase' ? 'Batch Import' : '-')
+      render: (value: any, tx: InventoryTransaction) => tx.reference_number || (tx.transaction_type === 'purchase' ? 'Batch Import' : '-')
     },
   ];
 
@@ -425,22 +427,22 @@ export function Inventory() {
     {
       key: 'return_number',
       label: 'Return #',
-      render: (ret: MaterialReturn) => ret.return_number || 'Pending'
+      render: (value: any, ret: MaterialReturn) => ret.return_number || 'Pending'
     },
     {
       key: 'return_date',
       label: 'Date',
-      render: (ret: MaterialReturn) => new Date(ret.return_date).toLocaleDateString()
+      render: (value: any, ret: MaterialReturn) => formatDate(ret.return_date)
     },
     {
       key: 'customer',
       label: 'Customer',
-      render: (ret: MaterialReturn) => ret.customer?.company_name || 'N/A'
+      render: (value: any, ret: MaterialReturn) => ret.customer?.company_name || 'N/A'
     },
     {
       key: 'return_type',
       label: 'Type',
-      render: (ret: MaterialReturn) => (
+      render: (value: any, ret: MaterialReturn) => (
         <span className="px-2 py-1 rounded-full text-xs font-medium bg-orange-100 text-orange-800">
           {ret.return_type.replace('_', ' ').toUpperCase()}
         </span>
@@ -449,12 +451,12 @@ export function Inventory() {
     {
       key: 'financial_impact',
       label: 'Amount',
-      render: (ret: MaterialReturn) => `$${ret.financial_impact.toFixed(2)}`
+      render: (value: any, ret: MaterialReturn) => `$${ret.financial_impact.toFixed(2)}`
     },
     {
       key: 'status',
       label: 'Status',
-      render: (ret: MaterialReturn) => (
+      render: (value: any, ret: MaterialReturn) => (
         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
           ret.status === 'approved' ? 'bg-green-100 text-green-800' :
           ret.status === 'rejected' ? 'bg-red-100 text-red-800' :
@@ -469,7 +471,7 @@ export function Inventory() {
     {
       key: 'restocked',
       label: 'Restocked',
-      render: (ret: MaterialReturn) => ret.restocked ? 'Yes' : 'No'
+      render: (value: any, ret: MaterialReturn) => ret.restocked ? 'Yes' : 'No'
     },
   ];
 
@@ -477,17 +479,17 @@ export function Inventory() {
     {
       key: 'rejection_number',
       label: 'Rejection #',
-      render: (rej: StockRejection) => rej.rejection_number || 'Pending'
+      render: (value: any, rej: StockRejection) => rej.rejection_number || 'Pending'
     },
     {
       key: 'rejection_date',
       label: 'Date',
-      render: (rej: StockRejection) => new Date(rej.rejection_date).toLocaleDateString()
+      render: (value: any, rej: StockRejection) => formatDate(rej.rejection_date)
     },
     {
       key: 'product',
       label: 'Product',
-      render: (rej: StockRejection) => (
+      render: (value: any, rej: StockRejection) => (
         <div>
           <div className="font-medium">{rej.product?.product_name}</div>
           <div className="text-xs text-gray-500">{rej.product?.product_code}</div>
@@ -497,17 +499,17 @@ export function Inventory() {
     {
       key: 'batch',
       label: 'Batch',
-      render: (rej: StockRejection) => rej.batch?.batch_number || 'N/A'
+      render: (value: any, rej: StockRejection) => rej.batch?.batch_number || 'N/A'
     },
     {
       key: 'quantity_rejected',
       label: 'Qty',
-      render: (rej: StockRejection) => rej.quantity_rejected
+      render: (value: any, rej: StockRejection) => rej.quantity_rejected
     },
     {
       key: 'rejection_reason',
       label: 'Reason',
-      render: (rej: StockRejection) => (
+      render: (value: any, rej: StockRejection) => (
         <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
           {rej.rejection_reason.replace('_', ' ').toUpperCase()}
         </span>
@@ -516,12 +518,12 @@ export function Inventory() {
     {
       key: 'financial_loss',
       label: 'Loss',
-      render: (rej: StockRejection) => `$${rej.financial_loss.toFixed(2)}`
+      render: (value: any, rej: StockRejection) => `$${rej.financial_loss.toFixed(2)}`
     },
     {
       key: 'status',
       label: 'Status',
-      render: (rej: StockRejection) => (
+      render: (value: any, rej: StockRejection) => (
         <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
           rej.status === 'approved' ? 'bg-green-100 text-green-800' :
           rej.status === 'rejected' ? 'bg-red-100 text-red-800' :
@@ -545,7 +547,7 @@ export function Inventory() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Inventory Management</h1>
+            <h1 className="text-3xl font-bold text-gray-900">{t('inventory.title')}</h1>
             <p className="text-gray-600 mt-1">Track transactions, returns, and rejections</p>
           </div>
           {canManage && activeTab === 'transactions' && (

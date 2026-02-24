@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
-import { DataTable } from '../components/DataTable';
 import { Modal } from '../components/Modal';
 import { FileUpload } from '../components/FileUpload';
 import { SearchableSelect } from '../components/SearchableSelect';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Edit, Trash2, AlertTriangle, Package, DollarSign, FileText, ExternalLink } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertTriangle, Package, DollarSign, FileText, ExternalLink, Search, ChevronDown, ChevronRight, Archive, Eye, EyeOff } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { formatDate } from '../utils/dateFormat';
 
 interface Batch {
   id: string;
@@ -20,6 +22,7 @@ interface Batch {
   packaging_details: string;
   import_price: number;
   import_price_usd: number | null;
+  import_price_per_unit: number | null;
   exchange_rate_usd_to_idr: number | null;
   duty_charges: number;
   duty_percent: number | null;
@@ -29,6 +32,7 @@ interface Batch {
   is_active: boolean;
   import_cost_allocated: number | null;
   final_landed_cost: number | null;
+  landed_cost_per_unit: number | null;
   import_container_id: string | null;
   cost_locked: boolean | null;
   products?: {
@@ -74,10 +78,16 @@ export function Batches() {
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [documentsModalOpen, setDocumentsModalOpen] = useState(false);
+  const [transactionHistoryModal, setTransactionHistoryModal] = useState(false);
   const [selectedBatchDocs, setSelectedBatchDocs] = useState<BatchDocument[]>([]);
   const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
+  const [selectedProductForHistory, setSelectedProductForHistory] = useState<{id: string; name: string; code: string; batchId?: string; batchNumber?: string} | null>(null);
+  const [transactionHistory, setTransactionHistory] = useState<any[]>([]);
   const [editingBatch, setEditingBatch] = useState<Batch | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<any[]>([]);
+  const [batchSearch, setBatchSearch] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
   const [formData, setFormData] = useState({
     batch_number: '',
     product_id: '',
@@ -107,14 +117,17 @@ export function Batches() {
 
   const loadBatches = async () => {
     try {
-      const { data, error } = await supabase
+      let query = supabase
         .from('batches')
         .select(`
           *,
           products(product_name, product_code, unit),
-          import_containers(container_ref)
+          import_containers(container_ref),
+          stock_reservations(id, reserved_quantity, status, sales_orders(so_number))
         `)
         .order('import_date', { ascending: false });
+
+      const { data, error } = await query;
 
       if (error) throw error;
 
@@ -125,7 +138,9 @@ export function Batches() {
             .select('*', { count: 'exact', head: true })
             .eq('batch_id', batch.id);
 
-          return { ...batch, document_count: count || 0 };
+          const activeReservations = (batch.stock_reservations || []).filter((r: any) => r.status === 'active');
+
+          return { ...batch, document_count: count || 0, active_reservations: activeReservations };
         })
       );
 
@@ -181,7 +196,7 @@ export function Batches() {
       setDocumentsModalOpen(true);
     } catch (error) {
       console.error('Error loading documents:', error);
-      alert('Failed to load documents');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load documents' });
     }
   };
 
@@ -189,7 +204,7 @@ export function Batches() {
     e.preventDefault();
 
     if (formData.import_price_usd > 0 && formData.exchange_rate_usd_to_idr <= 0) {
-      alert('Please enter a valid exchange rate');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter a valid exchange rate' });
       return;
     }
 
@@ -208,7 +223,7 @@ export function Batches() {
 
         // Validate that new import quantity is not less than sold quantity
         if (formData.import_quantity < soldQuantity) {
-          alert(`Cannot reduce import quantity to ${formData.import_quantity}. You have already sold ${soldQuantity} units from this batch.`);
+          showToast({ type: 'error', title: 'Error', message: `Cannot reduce import quantity to ${formData.import_quantity}. You have already sold ${soldQuantity} units from this batch.` });
           return;
         }
       }
@@ -228,44 +243,45 @@ export function Batches() {
       const freightAmount = calculateCharge(formData.freight_charges, formData.freight_charge_type, importPriceIDR);
       const otherAmount = calculateCharge(formData.other_charges, formData.other_charge_type, importPriceIDR);
 
-      const batchData = {
-        batch_number: formData.batch_number,
-        product_id: formData.product_id,
-        import_container_id: formData.import_container_id || null,
-        import_date: formData.import_date,
-        import_quantity: formData.import_quantity,
-        current_stock: formData.import_quantity,
-        packaging_details: formData.packaging_details,
-        import_price: importPriceIDR,
-        import_price_usd: formData.import_price_usd || null,
-        exchange_rate_usd_to_idr: formData.exchange_rate_usd_to_idr || null,
-        duty_percent: formData.duty_percent || 0,
-        duty_charges: dutyAmount,
-        duty_charge_type: 'percentage',
-        freight_charges: freightAmount,
-        freight_charge_type: formData.freight_charge_type,
-        other_charges: otherAmount,
-        other_charge_type: formData.other_charge_type,
-        expiry_date: formData.expiry_date || null,
-      };
-
       let batchId: string;
 
       if (editingBatch) {
+        const quantityDelta = formData.import_quantity - editingBatch.import_quantity;
+
+        const batchUpdateData = {
+          batch_number: formData.batch_number,
+          product_id: formData.product_id,
+          import_container_id: formData.import_container_id && formData.import_container_id.trim() !== '' ? formData.import_container_id : null,
+          import_date: formData.import_date,
+          import_quantity: formData.import_quantity,
+          packaging_details: formData.packaging_details,
+          import_price: importPriceIDR,
+          import_price_usd: formData.import_price_usd || null,
+          exchange_rate_usd_to_idr: formData.exchange_rate_usd_to_idr || null,
+          duty_percent: formData.duty_percent || 0,
+          duty_charges: dutyAmount,
+          duty_charge_type: 'percentage',
+          freight_charges: freightAmount,
+          freight_charge_type: formData.freight_charge_type,
+          other_charges: otherAmount,
+          other_charge_type: formData.other_charge_type,
+          expiry_date: formData.expiry_date || null,
+        };
+
         const { error } = await supabase
           .from('batches')
-          .update(batchData)
+          .update(batchUpdateData)
           .eq('id', editingBatch.id);
 
         if (error) throw error;
         batchId = editingBatch.id;
 
-        if (formData.import_quantity !== editingBatch.import_quantity) {
+        if (quantityDelta !== 0) {
           const { error: transError } = await supabase
             .from('inventory_transactions')
             .update({
               quantity: formData.import_quantity,
-              notes: `Updated import quantity from ${editingBatch.import_quantity} to ${formData.import_quantity}`
+              notes: `Updated import quantity from ${editingBatch.import_quantity} to ${formData.import_quantity} (Delta: ${quantityDelta > 0 ? '+' : ''}${quantityDelta})`
             })
             .eq('batch_id', editingBatch.id)
             .eq('transaction_type', 'purchase');
@@ -273,8 +289,42 @@ export function Batches() {
           if (transError) {
             console.error('Error updating purchase transaction:', transError);
           }
+
+          const { data: allTransactions } = await supabase
+            .from('inventory_transactions')
+            .select('quantity')
+            .eq('batch_id', editingBatch.id);
+
+          const recalculatedStock = allTransactions?.reduce((sum, t) => sum + parseFloat(t.quantity || '0'), 0) || 0;
+
+          await supabase
+            .from('batches')
+            .update({ current_stock: recalculatedStock })
+            .eq('id', editingBatch.id);
         }
       } else {
+        // For new batches, current_stock = import_quantity
+        const batchData = {
+          batch_number: formData.batch_number,
+          product_id: formData.product_id,
+          import_container_id: formData.import_container_id && formData.import_container_id.trim() !== '' ? formData.import_container_id : null,
+          import_date: formData.import_date,
+          import_quantity: formData.import_quantity,
+          current_stock: formData.import_quantity,
+          packaging_details: formData.packaging_details,
+          import_price: importPriceIDR,
+          import_price_usd: formData.import_price_usd || null,
+          exchange_rate_usd_to_idr: formData.exchange_rate_usd_to_idr || null,
+          duty_percent: formData.duty_percent || 0,
+          duty_charges: dutyAmount,
+          duty_charge_type: 'percentage',
+          freight_charges: freightAmount,
+          freight_charge_type: formData.freight_charge_type,
+          other_charges: otherAmount,
+          other_charge_type: formData.other_charge_type,
+          expiry_date: formData.expiry_date || null,
+        };
+
         const { data: { user } } = await supabase.auth.getUser();
         if (!user) throw new Error('Not authenticated');
 
@@ -295,7 +345,7 @@ export function Batches() {
       loadBatches();
     } catch (error) {
       console.error('Error saving batch:', error);
-      alert('Failed to save batch. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save batch. Please try again.' });
     }
   };
 
@@ -391,7 +441,7 @@ export function Batches() {
         .limit(1);
 
       if (salesItems && salesItems.length > 0) {
-        alert('Cannot delete this batch. It has been used in sales invoices. Please delete the related invoices first or contact your administrator.');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this batch. It has been used in sales invoices. Please delete the related invoices first or contact your administrator.' });
         return;
       }
 
@@ -402,11 +452,11 @@ export function Batches() {
         .limit(1);
 
       if (challanItems && challanItems.length > 0) {
-        alert('Cannot delete this batch. It has been used in delivery challans. Please delete the related delivery challans first.');
+        showToast({ type: 'error', title: 'Error', message: 'Cannot delete this batch. It has been used in delivery challans. Please delete the related delivery challans first.' });
         return;
       }
 
-      if (!confirm('Are you sure you want to delete this batch? This will permanently remove all related data.')) return;
+      if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this batch? This will permanently remove all related data.', variant: 'danger', confirmLabel: 'Delete' })) return;
 
       const { error: docsError } = await supabase
         .from('batch_documents')
@@ -436,12 +486,12 @@ export function Batches() {
 
       if (error) throw error;
 
-      alert('Batch deleted successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Batch deleted successfully' });
       await loadBatches();
     } catch (error: any) {
       console.error('Error deleting batch:', error);
       const errorMessage = error?.message || 'Unknown error occurred';
-      alert(`Failed to delete batch: ${errorMessage}`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to delete batch: ${errorMessage}` });
     }
   };
 
@@ -468,6 +518,135 @@ export function Batches() {
       per_pack_weight: '',
       pack_type: 'bag',
     });
+  };
+
+  const showTransactionHistory = async (productId: string, productName: string, productCode: string, batchId?: string, batchNumber?: string) => {
+    setSelectedProductForHistory({ id: productId, name: productName, code: productCode, batchId, batchNumber });
+    setTransactionHistoryModal(true);
+
+    let txnQuery = supabase
+      .from('inventory_transactions')
+      .select('*')
+      .order('transaction_date', { ascending: false })
+      .order('created_at', { ascending: false });
+
+    if (batchId) {
+      txnQuery = txnQuery.eq('batch_id', batchId);
+    } else {
+      txnQuery = txnQuery.eq('product_id', productId);
+    }
+
+    const [txnResult, resResult] = await Promise.all([
+      txnQuery,
+      batchId
+        ? supabase
+            .from('stock_reservations')
+            .select('id, reserved_quantity, status, reserved_at, is_released, released_at, release_reason, sales_orders(so_number, customers(company_name))')
+            .eq('batch_id', batchId)
+            .order('reserved_at', { ascending: false })
+        : Promise.resolve({ data: [], error: null })
+    ]);
+
+    if (txnResult.error) {
+      console.error('Error loading transaction history:', txnResult.error);
+      showToast({ type: 'error', title: 'Error', message: 'Error loading transaction history: ' + txnResult.error.message });
+      return;
+    }
+
+    const enrichedTxns = await Promise.all((txnResult.data || []).map(async (txn) => {
+      let dcData = null;
+      let soData = null;
+
+      if (txn.reference_number && txn.reference_number.startsWith('DO-')) {
+        const { data: dc } = await supabase
+          .from('delivery_challans')
+          .select('challan_number, customer_id, customers(company_name)')
+          .eq('challan_number', txn.reference_number)
+          .maybeSingle();
+        dcData = dc;
+      }
+
+      if (txn.sales_order_id) {
+        const { data: so } = await supabase
+          .from('sales_orders')
+          .select('so_number, customer_id, customers(company_name)')
+          .eq('id', txn.sales_order_id)
+          .maybeSingle();
+        soData = so;
+      }
+
+      return {
+        ...txn,
+        delivery_challans: dcData,
+        sales_orders: soData,
+        _type: 'transaction' as const
+      };
+    }));
+
+    const reservationEntries = (resResult.data || []).map((r: any) => ({
+      id: r.id,
+      _type: 'reservation' as const,
+      quantity: r.reserved_quantity,
+      status: r.status,
+      is_released: r.is_released,
+      released_at: r.released_at,
+      release_reason: r.release_reason,
+      created_at: r.reserved_at,
+      transaction_date: r.reserved_at?.split('T')[0] || '',
+      transaction_type: r.status === 'active' ? 'reserved' : 'reservation_released',
+      so_number: r.sales_orders?.so_number,
+      customer_name: r.sales_orders?.customers?.company_name,
+    }));
+
+    const combined = [...enrichedTxns, ...reservationEntries].sort(
+      (a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    );
+
+    setTransactionHistory(combined);
+  };
+
+  const toggleProduct = (productId: string) => {
+    setExpandedProducts(prev => {
+      const next = new Set(prev);
+      if (next.has(productId)) next.delete(productId);
+      else next.add(productId);
+      return next;
+    });
+  };
+
+  const handleArchiveBatch = async (batchId: string) => {
+    const confirmed = await showConfirm({
+      title: 'Archive Batch',
+      message: 'This batch has 0 stock. Archive it to hide from the active list?',
+      confirmText: 'Archive',
+      cancelText: 'Cancel',
+    });
+    if (!confirmed) return;
+    try {
+      const { error } = await supabase
+        .from('batches')
+        .update({ is_active: false })
+        .eq('id', batchId);
+      if (error) throw error;
+      showToast({ type: 'success', title: 'Archived', message: 'Batch archived successfully' });
+      await loadBatches();
+    } catch (error: any) {
+      showToast({ type: 'error', title: 'Error', message: error?.message || 'Failed to archive batch' });
+    }
+  };
+
+  const handleUnarchiveBatch = async (batchId: string) => {
+    try {
+      const { error } = await supabase
+        .from('batches')
+        .update({ is_active: true })
+        .eq('id', batchId);
+      if (error) throw error;
+      showToast({ type: 'success', title: 'Restored', message: 'Batch restored successfully' });
+      await loadBatches();
+    } catch (error: any) {
+      showToast({ type: 'error', title: 'Error', message: error?.message || 'Failed to restore batch' });
+    }
   };
 
   const isLowStock = (batch: Batch) => batch.current_stock < batch.import_quantity * 0.2;
@@ -514,143 +693,6 @@ export function Batches() {
     return `Rp ${amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  const columns = [
-    { key: 'batch_number', label: 'Batch Number' },
-    {
-      key: 'product',
-      label: 'Product',
-      render: (batch: Batch) => (
-        <div>
-          <div className="font-medium">{batch.products?.product_name}</div>
-          {batch.products?.product_code && (
-            <div className="text-xs text-gray-500">{batch.products.product_code}</div>
-          )}
-        </div>
-      )
-    },
-    {
-      key: 'import_date',
-      label: 'Import Date',
-      render: (batch: Batch) => new Date(batch.import_date).toLocaleDateString()
-    },
-    {
-      key: 'stock',
-      label: 'Stock',
-      render: (batch: Batch) => {
-        const freeStock = batch.current_stock - (batch.reserved_stock || 0);
-        return (
-          <div className="flex flex-col gap-1">
-            <div className="flex items-center gap-2">
-              <span className={isLowStock(batch) ? 'text-orange-600 font-semibold' : 'font-medium'}>
-                {batch.current_stock} {batch.products?.unit}
-              </span>
-              {isLowStock(batch) && (
-                <AlertTriangle className="w-4 h-4 text-orange-600" />
-              )}
-            </div>
-            {batch.reserved_stock > 0 && (
-              <div className="text-xs space-y-0.5">
-                <div className="text-amber-600">
-                  Reserved: {batch.reserved_stock} {batch.products?.unit}
-                </div>
-                <div className="text-green-600">
-                  Free: {freeStock} {batch.products?.unit}
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      }
-    },
-    {
-      key: 'pricing',
-      label: 'Import Price',
-      render: (batch: Batch) => (
-        <div className="text-sm">
-          {batch.import_price_usd && batch.exchange_rate_usd_to_idr ? (
-            <>
-              <div className="font-medium text-green-700">
-                {formatCurrency(batch.import_price_usd, 'USD')}
-              </div>
-              <div className="text-xs text-gray-500">
-                {formatCurrency(batch.import_price)}
-              </div>
-              <div className="text-xs text-gray-400">
-                @ {batch.exchange_rate_usd_to_idr.toLocaleString()}
-              </div>
-            </>
-          ) : (
-            <div className="text-gray-500">{formatCurrency(batch.import_price)}</div>
-          )}
-        </div>
-      )
-    },
-    {
-      key: 'landed_cost',
-      label: 'Landed Cost',
-      render: (batch: Batch) => (
-        <div className="text-sm">
-          {batch.import_cost_allocated && batch.import_cost_allocated > 0 ? (
-            <>
-              <div className="font-medium text-blue-700">
-                {formatCurrency(batch.final_landed_cost || 0)}
-              </div>
-              <div className="text-xs text-gray-500">
-                Base: {formatCurrency(batch.import_price)}
-              </div>
-              <div className="text-xs text-green-600">
-                +Import: {formatCurrency(batch.import_cost_allocated)}
-              </div>
-              {batch.import_containers?.container_ref && (
-                <div className="text-xs text-gray-400">
-                  {batch.import_containers.container_ref}
-                </div>
-              )}
-              {batch.cost_locked && (
-                <div className="text-xs text-amber-600 font-medium">🔒 Locked</div>
-              )}
-            </>
-          ) : (
-            <div className="text-gray-400 text-xs">Not allocated</div>
-          )}
-        </div>
-      )
-    },
-    {
-      key: 'expiry_date',
-      label: 'Expiry Date',
-      render: (batch: Batch) => (
-        <span className={
-          isExpired(batch) ? 'text-red-700 font-semibold' :
-          isNearExpiry(batch) ? 'text-orange-600 font-semibold' : ''
-        }>
-          {batch.expiry_date ? new Date(batch.expiry_date).toLocaleDateString() : 'N/A'}
-        </span>
-      )
-    },
-    {
-      key: 'documents',
-      label: 'Docs',
-      render: (batch: Batch) => (
-        <button
-          onClick={() => loadBatchDocuments(batch.id)}
-          className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded hover:bg-blue-100 transition"
-        >
-          <FileText className="w-4 h-4" />
-          <span className="text-sm font-medium">{batch.document_count || 0}</span>
-        </button>
-      )
-    },
-    {
-      key: 'total_cost',
-      label: 'Total Cost',
-      render: (batch: Batch) => {
-        const total = batch.import_price + batch.duty_charges + batch.freight_charges + batch.other_charges;
-        return <span className="font-medium">{formatCurrency(total)}</span>;
-      }
-    },
-  ];
-
   const canEdit = profile?.role === 'admin' || profile?.role === 'warehouse' || profile?.role === 'accounts';
 
   return (
@@ -675,63 +717,370 @@ export function Batches() {
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-          <div className="bg-white rounded-lg shadow p-6">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="bg-white rounded-lg shadow p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600">Total Batches</p>
-                <p className="text-2xl font-bold text-gray-900 mt-1">{batches.length}</p>
+                <p className="text-xs text-gray-500">Active Batches</p>
+                <p className="text-xl font-bold text-gray-900 mt-0.5">{batches.filter(b => b.is_active).length}</p>
               </div>
-              <Package className="w-8 h-8 text-blue-600" />
+              <Package className="w-6 h-6 text-blue-600" />
             </div>
           </div>
-
-          <div className="bg-orange-50 rounded-lg shadow p-6">
+          <div className="bg-white rounded-lg shadow p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-orange-600">Low Stock</p>
-                <p className="text-2xl font-bold text-orange-600 mt-1">
-                  {batches.filter(isLowStock).length}
-                </p>
+                <p className="text-xs text-gray-500">Sold Out</p>
+                <p className="text-xl font-bold text-orange-600 mt-0.5">{batches.filter(b => b.is_active && b.current_stock <= 0).length}</p>
               </div>
-              <AlertTriangle className="w-8 h-8 text-orange-600" />
+              <Archive className="w-6 h-6 text-orange-500" />
             </div>
           </div>
-
-          <div className="bg-red-50 rounded-lg shadow p-6">
+          <div className="bg-white rounded-lg shadow p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-red-600">Near Expiry</p>
-                <p className="text-2xl font-bold text-red-600 mt-1">
-                  {batches.filter(isNearExpiry).length}
-                </p>
+                <p className="text-xs text-gray-500">Low Stock</p>
+                <p className="text-xl font-bold text-amber-600 mt-0.5">{batches.filter(b => b.is_active && isLowStock(b) && b.current_stock > 0).length}</p>
               </div>
-              <AlertTriangle className="w-8 h-8 text-red-600" />
+              <AlertTriangle className="w-6 h-6 text-amber-500" />
+            </div>
+          </div>
+          <div className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-xs text-gray-500">Near Expiry</p>
+                <p className="text-xl font-bold text-red-600 mt-0.5">{batches.filter(b => b.is_active && isNearExpiry(b)).length}</p>
+              </div>
+              <AlertTriangle className="w-6 h-6 text-red-500" />
             </div>
           </div>
         </div>
 
-        <DataTable
-          columns={columns}
-          data={batches}
-          loading={loading}
-          actions={canEdit ? (batch) => (
-            <div className="flex items-center gap-2">
-              <button
-                onClick={() => handleEdit(batch)}
-                className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-              >
-                <Edit className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => handleDelete(batch.id)}
-                className="p-1 text-red-600 hover:bg-red-50 rounded"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+        {/* Batches Table - Grouped by Product */}
+        <div className="bg-white rounded-lg shadow">
+          <div className="p-3 border-b border-gray-200 flex items-center gap-3">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={batchSearch}
+                onChange={(e) => setBatchSearch(e.target.value)}
+                placeholder="Search batches..."
+                className="w-full pl-9 pr-4 py-1.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 outline-none text-sm"
+              />
             </div>
-          ) : undefined}
-        />
+            <button
+              onClick={() => setShowArchived(!showArchived)}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition ${showArchived ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'}`}
+            >
+              {showArchived ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              {showArchived ? 'Hide Archived' : 'Show Archived'}
+            </button>
+            <button
+              onClick={() => {
+                if (expandedProducts.size > 0) setExpandedProducts(new Set());
+                else {
+                  const allIds = new Set(batches.map(b => b.product_id));
+                  setExpandedProducts(allIds);
+                }
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium bg-gray-100 text-gray-600 hover:bg-gray-200 transition"
+            >
+              {expandedProducts.size > 0 ? 'Collapse All' : 'Expand All'}
+            </button>
+          </div>
+
+          {loading ? (
+            <div className="p-8 text-center">
+              <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-blue-600 mx-auto" />
+              <p className="mt-3 text-gray-500 text-sm">Loading batches...</p>
+            </div>
+          ) : (() => {
+            const filtered = batches.filter(batch => {
+              const isArchived = !batch.is_active;
+              if (!showArchived && isArchived) return false;
+              if (!batchSearch) return true;
+              const q = batchSearch.toLowerCase();
+              return (
+                batch.batch_number?.toLowerCase().includes(q) ||
+                batch.products?.product_name?.toLowerCase().includes(q) ||
+                batch.products?.product_code?.toLowerCase().includes(q)
+              );
+            });
+
+            const grouped = new Map<string, { productName: string; productCode: string; unit: string; productId: string; batches: typeof filtered }>();
+            filtered.forEach(batch => {
+              const key = batch.product_id;
+              if (!grouped.has(key)) {
+                grouped.set(key, {
+                  productName: batch.products?.product_name || '',
+                  productCode: batch.products?.product_code || '',
+                  unit: batch.products?.unit || 'kg',
+                  productId: key,
+                  batches: [],
+                });
+              }
+              grouped.get(key)!.batches.push(batch);
+            });
+
+            const sortedGroups = Array.from(grouped.values()).sort((a, b) => {
+              const aStock = a.batches.reduce((s, bt) => s + bt.current_stock, 0);
+              const bStock = b.batches.reduce((s, bt) => s + bt.current_stock, 0);
+              if (aStock > 0 && bStock <= 0) return -1;
+              if (aStock <= 0 && bStock > 0) return 1;
+              return a.productName.localeCompare(b.productName);
+            });
+
+            if (sortedGroups.length === 0) {
+              return (
+                <div className="px-6 py-8 text-center text-gray-400 text-sm">
+                  {batchSearch ? 'No batches match your search.' : 'No batches found.'}
+                </div>
+              );
+            }
+
+            return (
+              <div>
+                <table className="w-full text-sm">
+                  <thead className="bg-gray-50 border-b border-gray-200">
+                    <tr>
+                      <th className="pl-3 pr-2 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-8"></th>
+                      <th className="px-2 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider">Product Name</th>
+                      <th className="px-2 py-2 text-left text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Code</th>
+                      <th className="px-2 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider w-20">Batches</th>
+                      <th className="px-2 py-2 text-center text-xs font-semibold text-gray-500 uppercase tracking-wider w-28">Sold / Res</th>
+                      <th className="px-2 py-2 text-right text-xs font-semibold text-gray-500 uppercase tracking-wider w-28 pr-3">Stock</th>
+                    </tr>
+                  </thead>
+                </table>
+                {sortedGroups.map(group => {
+                  const isExpanded = expandedProducts.has(group.productId) || !!batchSearch;
+                  const totalStock = group.batches.reduce((s, b) => s + b.current_stock, 0);
+                  const activeBatches = group.batches.filter(b => b.is_active);
+                  const totalSold = group.batches.reduce((s, b) => s + (b.import_quantity - b.current_stock), 0);
+                  const totalReserved = group.batches.reduce((s, b) => s + (b.reserved_stock || 0), 0);
+                  const zeroStockActive = activeBatches.filter(b => b.current_stock <= 0).length;
+
+                  return (
+                    <div key={group.productId} className="border-b border-gray-200 last:border-b-0">
+                      <button
+                        onClick={() => toggleProduct(group.productId)}
+                        className="w-full hover:bg-gray-50 transition text-left"
+                      >
+                        <table className="w-full text-sm">
+                          <tbody>
+                            <tr>
+                              <td className="pl-3 pr-2 py-2 w-8">
+                                {isExpanded ? <ChevronDown className="w-4 h-4 text-gray-400" /> : <ChevronRight className="w-4 h-4 text-gray-400" />}
+                              </td>
+                              <td className="px-2 py-2">
+                                <span className="font-semibold text-gray-900">{group.productName}</span>
+                              </td>
+                              <td className="px-2 py-2 w-28 text-xs text-gray-400">{group.productCode}</td>
+                              <td className="px-2 py-2 w-20 text-center">
+                                <span className="text-xs text-blue-700 font-medium">{activeBatches.length}</span>
+                                {zeroStockActive > 0 && (
+                                  <span className="text-[10px] text-orange-500 ml-1">({zeroStockActive} out)</span>
+                                )}
+                              </td>
+                              <td className="px-2 py-2 w-28 text-center">
+                                <span className="text-xs text-gray-600">{totalSold.toLocaleString()}</span>
+                                {totalReserved > 0 && (
+                                  <span className="text-xs text-amber-600 ml-1">/ {totalReserved.toLocaleString()}</span>
+                                )}
+                              </td>
+                              <td className={`px-2 py-2 w-28 text-right pr-3 text-sm font-semibold ${totalStock > 0 ? 'text-gray-900' : 'text-red-500'}`}>
+                                {totalStock.toLocaleString()} {group.unit}
+                              </td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </button>
+
+                      {isExpanded && (
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-xs">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-3 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wider">Batch #</th>
+                                <th className="px-3 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wider w-24">Import</th>
+                                <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider w-20">Stock</th>
+                                <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider w-16">Res</th>
+                                <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider w-16">Free</th>
+                                <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider w-32">Price/unit</th>
+                                <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider w-36">Landed/unit</th>
+                                <th className="px-3 py-1.5 text-left font-semibold text-gray-500 uppercase tracking-wider w-24">Expiry</th>
+                                <th className="px-3 py-1.5 text-center font-semibold text-gray-500 uppercase tracking-wider w-10">D</th>
+                                <th className="px-3 py-1.5 text-right font-semibold text-gray-500 uppercase tracking-wider">Container</th>
+                                {canEdit && <th className="px-3 py-1.5 text-center font-semibold text-gray-500 uppercase tracking-wider w-24"></th>}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {group.batches
+                                .sort((a, b) => new Date(b.import_date).getTime() - new Date(a.import_date).getTime())
+                                .map(batch => {
+                                  const freeStock = batch.current_stock - (batch.reserved_stock || 0);
+                                  const landedCostPerUnit = batch.landed_cost_per_unit || batch.import_price;
+                                  const containerPerUnit = (batch.import_cost_allocated && batch.import_quantity > 0) ? batch.import_cost_allocated / batch.import_quantity : 0;
+                                  const fullLandedIDR = landedCostPerUnit + containerPerUnit;
+                                  const hasUSD = batch.import_price_usd && batch.exchange_rate_usd_to_idr;
+                                  const isArchived = !batch.is_active;
+                                  const isSoldOut = batch.current_stock <= 0 && batch.is_active;
+
+                                  return (
+                                    <tr key={batch.id} className={`border-t border-gray-100 hover:bg-gray-50 ${isArchived ? 'opacity-50 bg-gray-50' : isSoldOut ? 'bg-orange-50/30' : ''}`}>
+                                      <td className="px-3 py-1.5">
+                                        <button
+                                          onClick={() => showTransactionHistory(batch.product_id, batch.products?.product_name || '', batch.products?.product_code || '', batch.id, batch.batch_number)}
+                                          className="font-mono text-sm font-medium text-blue-600 hover:text-blue-800 hover:underline"
+                                        >
+                                          {batch.batch_number}
+                                        </button>
+                                        {isArchived && <span className="ml-1.5 text-[10px] text-gray-400 bg-gray-200 px-1 rounded">archived</span>}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-gray-500 whitespace-nowrap">{formatDate(batch.import_date)}</td>
+                                      <td className="px-3 py-1.5 text-right">
+                                        <span className={`font-semibold ${batch.current_stock <= 0 ? 'text-red-500' : isLowStock(batch) ? 'text-orange-600' : 'text-gray-900'}`}>
+                                          {batch.current_stock.toLocaleString()}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right">
+                                        {batch.reserved_stock > 0 ? (
+                                          <span className="text-amber-600 font-medium">{batch.reserved_stock.toLocaleString()}</span>
+                                        ) : (
+                                          <span className="text-gray-300">-</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right">
+                                        <span className={`font-semibold ${freeStock <= 0 ? 'text-red-500' : 'text-green-600'}`}>
+                                          {freeStock.toLocaleString()}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right">
+                                        {hasUSD ? (
+                                          <div>
+                                            <span className="text-green-700 font-medium">{formatCurrency(batch.import_price_usd!, 'USD')}</span>
+                                            <div className="text-[10px] text-gray-400">{formatCurrency(batch.import_price)} @ {batch.exchange_rate_usd_to_idr!.toLocaleString('id-ID')}</div>
+                                          </div>
+                                        ) : (
+                                          <span className="text-gray-700 font-medium">{formatCurrency(batch.import_price)}</span>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right">
+                                        {hasUSD ? (
+                                          <div>
+                                            <span className="text-blue-700 font-medium">{formatCurrency(fullLandedIDR / batch.exchange_rate_usd_to_idr!, 'USD')}</span>
+                                            <div className="text-[10px] text-gray-500">{formatCurrency(fullLandedIDR)}</div>
+                                            {containerPerUnit > 0 && (
+                                              <div className="text-[10px] text-gray-400">incl. ctr {formatCurrency(containerPerUnit)}/u</div>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <div>
+                                            <span className="text-blue-700 font-medium">{formatCurrency(fullLandedIDR)}</span>
+                                            {containerPerUnit > 0 && (
+                                              <div className="text-[10px] text-gray-400">incl. ctr {formatCurrency(containerPerUnit)}/u</div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-1.5 whitespace-nowrap">
+                                        <span className={isExpired(batch) ? 'text-red-600 font-semibold' : isNearExpiry(batch) ? 'text-orange-500 font-semibold' : 'text-gray-600'}>
+                                          {batch.expiry_date ? formatDate(batch.expiry_date) : '—'}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-1.5 text-center">
+                                        <button onClick={() => loadBatchDocuments(batch.id)} className="text-blue-600 hover:text-blue-800" title="Documents">
+                                          <FileText className="w-3 h-3 inline" />
+                                          <span className="ml-0.5">{batch.document_count || 0}</span>
+                                        </button>
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right text-gray-400 text-[10px] truncate max-w-[130px]">
+                                        {batch.import_containers?.container_ref || '—'}
+                                      </td>
+                                      {canEdit && (
+                                        <td className="px-3 py-1.5 text-center">
+                                          <div className="flex items-center justify-center gap-0.5">
+                                            <button onClick={() => handleEdit(batch)} className="p-1 text-blue-600 hover:bg-blue-50 rounded" title="Edit">
+                                              <Edit className="w-3 h-3" />
+                                            </button>
+                                            {isSoldOut && (
+                                              <button onClick={() => handleArchiveBatch(batch.id)} className="p-1 text-gray-500 hover:bg-gray-100 rounded" title="Archive">
+                                                <Archive className="w-3 h-3" />
+                                              </button>
+                                            )}
+                                            {isArchived && (
+                                              <button onClick={() => handleUnarchiveBatch(batch.id)} className="p-1 text-green-600 hover:bg-green-50 rounded" title="Restore">
+                                                <Eye className="w-3 h-3" />
+                                              </button>
+                                            )}
+                                            <button onClick={() => handleDelete(batch.id)} className="p-1 text-red-600 hover:bg-red-50 rounded" title="Delete">
+                                              <Trash2 className="w-3 h-3" />
+                                            </button>
+                                          </div>
+                                        </td>
+                                      )}
+                                    </tr>
+                                  );
+                                })}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Summary Section */}
+        {batches.length > 0 && (
+          <div className="bg-gradient-to-r from-blue-50 to-green-50 rounded-lg shadow-lg p-6 border-2 border-blue-200">
+            <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-blue-600" />
+              Total Import Value Summary
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600 font-medium">Total Value (USD)</p>
+                <p className="text-3xl font-bold text-green-700">
+                  {formatCurrency(
+                    batches.reduce((sum, batch) => {
+                      const totalUSD = batch.import_price_usd ? batch.import_price_usd * batch.import_quantity : 0;
+                      return sum + totalUSD;
+                    }, 0),
+                    'USD'
+                  )}
+                </p>
+              </div>
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600 font-medium">Total Value (IDR)</p>
+                <p className="text-3xl font-bold text-blue-700">
+                  {formatCurrency(
+                    batches.reduce((sum, batch) => {
+                      const totalIDR = batch.import_price * batch.import_quantity;
+                      return sum + totalIDR;
+                    }, 0)
+                  )}
+                </p>
+              </div>
+            </div>
+            <div className="mt-4 pt-4 border-t border-blue-200">
+              <div className="flex justify-between items-center text-sm">
+                <span className="text-gray-600">Total Batches:</span>
+                <span className="font-semibold text-gray-900">{batches.length}</span>
+              </div>
+              <div className="flex justify-between items-center text-sm mt-1">
+                <span className="text-gray-600">Total Quantity:</span>
+                <span className="font-semibold text-gray-900">
+                  {batches.reduce((sum, batch) => sum + batch.import_quantity, 0).toLocaleString()} units
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
 
         <Modal
           isOpen={modalOpen}
@@ -740,26 +1089,54 @@ export function Batches() {
             resetForm();
           }}
           title={editingBatch ? 'Edit Batch' : 'Add New Batch'}
+          size="xl"
         >
-          <form onSubmit={handleSubmit} className="space-y-3">
-            <div className="border-b pb-2">
-              <h3 className="text-sm font-semibold text-gray-900 mb-2">Basic Information</h3>
-              <div className="grid grid-cols-2 gap-3">
+          <form onSubmit={handleSubmit} className="space-y-2">
+            <div className="border-b pb-1.5">
+              <h3 className="text-xs font-semibold text-gray-900 mb-1.5">Basic Information</h3>
+              <div className="grid grid-cols-[2fr_1fr_1fr] gap-2 mb-2">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Batch Number *
                   </label>
                   <input
                     type="text"
                     value={formData.batch_number}
                     onChange={(e) => setFormData({ ...formData, batch_number: e.target.value })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                     required
                   />
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                    Import Date *
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.import_date}
+                    onChange={(e) => setFormData({ ...formData, import_date: e.target.value })}
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    required
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
+                    Expiry Date
+                  </label>
+                  <input
+                    type="date"
+                    value={formData.expiry_date}
+                    onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Product *
                   </label>
                   <SearchableSelect
@@ -783,32 +1160,7 @@ export function Batches() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Import Date *
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.import_date}
-                    onChange={(e) => setFormData({ ...formData, import_date: e.target.value })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-                    required
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
-                    Expiry Date
-                  </label>
-                  <input
-                    type="date"
-                    value={formData.expiry_date}
-                    onChange={(e) => setFormData({ ...formData, expiry_date: e.target.value })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Import Container (Optional)
                   </label>
                   <SearchableSelect
@@ -829,18 +1181,18 @@ export function Batches() {
               </div>
             </div>
 
-            <div className="border-b pb-2">
-              <h3 className="text-sm font-semibold text-gray-900 mb-2">Quantity</h3>
-              <div className="grid grid-cols-2 gap-3">
+            <div className="border-b pb-1.5">
+              <h3 className="text-xs font-semibold text-gray-900 mb-1.5">Quantity</h3>
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Import Quantity *
                   </label>
                   <input
                     type="number"
                     value={formData.import_quantity === 0 ? '' : formData.import_quantity}
                     onChange={(e) => setFormData({ ...formData, import_quantity: e.target.value === '' ? 0 : Number(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                     required
                     min="0"
                     step="0.001"
@@ -851,10 +1203,10 @@ export function Batches() {
 
                 {editingBatch && (
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">
+                    <label className="block text-xs font-medium text-gray-700 mb-0.5">
                       Current Stock
                     </label>
-                    <div className="w-full px-2 py-1.5 text-sm border border-gray-200 rounded bg-gray-50">
+                    <div className="w-full px-2 py-1 text-sm border border-gray-200 rounded bg-gray-50">
                       <span className="text-gray-700 font-medium">{editingBatch.current_stock.toLocaleString()}</span>
                     </div>
                     <p className="text-xs text-gray-500 mt-0.5">
@@ -866,14 +1218,14 @@ export function Batches() {
               </div>
             </div>
 
-            <div className="border-b pb-2">
-              <h3 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                <Package className="w-4 h-4" />
+            <div className="border-b pb-1.5">
+              <h3 className="text-xs font-semibold text-gray-900 mb-1 flex items-center gap-1.5">
+                <Package className="w-3.5 h-3.5" />
                 Packaging Details (Optional)
               </h3>
               <div className="grid grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Per Pack Weight
                   </label>
                   <input
@@ -892,13 +1244,13 @@ export function Batches() {
                       setFormData(newFormData);
                     }}
                     placeholder="e.g., 25"
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                   />
                   <p className="text-xs text-gray-500 mt-0.5">kg per pack</p>
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Pack Type
                   </label>
                   <select
@@ -914,7 +1266,7 @@ export function Batches() {
                       }
                       setFormData(newFormData);
                     }}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                   >
                     <option value="bag">Bag</option>
                     <option value="drum">Drum</option>
@@ -926,10 +1278,10 @@ export function Batches() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Calculated Packs
                   </label>
-                  <div className="px-2 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded">
+                  <div className="px-2 py-1 text-sm bg-gray-50 border border-gray-200 rounded">
                     <span className="text-gray-700 font-medium">
                       {formData.import_quantity && formData.per_pack_weight
                         ? Math.ceil(formData.import_quantity / parseFloat(formData.per_pack_weight))
@@ -941,7 +1293,7 @@ export function Batches() {
               </div>
 
               {formData.packaging_details && (
-                <div className="mt-1.5 p-2 bg-blue-50 border border-blue-200 rounded">
+                <div className="mt-1 p-1.5 bg-blue-50 border border-blue-200 rounded">
                   <p className="text-xs text-blue-900">
                     <span className="font-semibold">Packaging: </span>
                     {formData.packaging_details}
@@ -950,21 +1302,21 @@ export function Batches() {
               )}
             </div>
 
-            <div className="border-b pb-2">
-              <h3 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                <DollarSign className="w-4 h-4 text-green-600" />
+            <div className="border-b pb-1.5">
+              <h3 className="text-xs font-semibold text-gray-900 mb-1 flex items-center gap-1.5">
+                <DollarSign className="w-3.5 h-3.5 text-green-600" />
                 Import Pricing (USD)
               </h3>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-2 gap-2">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Import Price (USD)
                   </label>
                   <input
                     type="number"
                     value={formData.import_price_usd === 0 ? '' : formData.import_price_usd}
                     onChange={(e) => setFormData({ ...formData, import_price_usd: e.target.value === '' ? 0 : Number(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                     min="0"
                     step="0.01"
                     placeholder="0.00"
@@ -972,14 +1324,14 @@ export function Batches() {
                 </div>
 
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">
+                  <label className="block text-xs font-medium text-gray-700 mb-0.5">
                     Exchange Rate (USD to IDR)
                   </label>
                   <input
                     type="number"
                     value={formData.exchange_rate_usd_to_idr === 0 ? '' : formData.exchange_rate_usd_to_idr}
                     onChange={(e) => setFormData({ ...formData, exchange_rate_usd_to_idr: e.target.value === '' ? 0 : Number(e.target.value) })}
-                    className="w-full px-2 py-1.5 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
+                    className="w-full px-2 py-1 text-sm border border-gray-300 rounded focus:ring-1 focus:ring-blue-500"
                     min="0"
                     step="0.0001"
                     placeholder="15000"
@@ -991,7 +1343,7 @@ export function Batches() {
               </div>
 
               {formData.import_price_usd > 0 && formData.exchange_rate_usd_to_idr > 0 && (
-                <div className="mt-2 p-2 bg-green-50 border border-green-200 rounded">
+                <div className="mt-1 p-1.5 bg-green-50 border border-green-200 rounded">
                   <p className="text-xs text-green-800">
                     <span className="font-semibold">Calculated Import Price (IDR):</span>{' '}
                     {formatCurrency(formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
@@ -1003,8 +1355,8 @@ export function Batches() {
               )}
             </div>
 
-            <div className="border-b pb-3">
-              <h3 className="text-sm font-semibold text-gray-900 mb-2">Additional Charges</h3>
+            <div className="border-b pb-1.5">
+              <h3 className="text-xs font-semibold text-gray-900 mb-1">Additional Charges</h3>
               <div className="space-y-3">
                 <div className="grid grid-cols-[1fr_1fr_1fr] gap-2">
                   <div>
@@ -1100,7 +1452,7 @@ export function Batches() {
               <h3 className="text-xs font-semibold text-blue-900 mb-1.5">Total Cost Summary</h3>
               <div className="space-y-0.5 text-xs text-blue-800">
                 <div className="flex justify-between">
-                  <span>Import Price (IDR):</span>
+                  <span>Import Price (per unit):</span>
                   <span className="font-medium">
                     {formatCurrency(formData.import_price_usd * formData.exchange_rate_usd_to_idr)}
                   </span>
@@ -1132,16 +1484,36 @@ export function Batches() {
                     )}
                   </span>
                 </div>
-                <div className="border-t border-blue-300 pt-1.5 mt-1.5 flex justify-between">
-                  <span className="font-bold">Total Cost (IDR):</span>
-                  <span className="font-bold text-sm">{formatCurrency(calculateTotalCostIDR())}</span>
+                <div className="border-t border-blue-300 pt-1.5 mt-1.5 space-y-1">
+                  <div className="flex justify-between">
+                    <span className="font-bold">Total Cost (IDR):</span>
+                    <span className="font-bold text-sm">{formatCurrency(calculateTotalCostIDR())}</span>
+                  </div>
+                  {formData.import_quantity > 0 && (
+                    <div className="bg-green-50 border border-green-200 rounded px-2 py-1.5 mt-2">
+                      <div className="flex justify-between items-center">
+                        <span className="font-bold text-green-900">Total Batch Cost:</span>
+                        <div className="text-right">
+                          <div className="font-bold text-green-700">
+                            {formatCurrency(formData.import_price_usd * formData.import_quantity, 'USD')}
+                          </div>
+                          <div className="text-xs text-green-600">
+                            {formatCurrency((formData.import_price_usd * formData.exchange_rate_usd_to_idr) * formData.import_quantity)}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="text-xs text-green-700 mt-0.5">
+                        {formatCurrency(formData.import_price_usd, 'USD')} × {formData.import_quantity} = {formatCurrency(formData.import_price_usd * formData.import_quantity, 'USD')}
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
 
-            <div className="border-t pt-2">
-              <h3 className="text-sm font-semibold text-gray-900 mb-2 flex items-center gap-2">
-                <FileText className="w-4 h-4" />
+            <div className="border-t pt-1.5">
+              <h3 className="text-xs font-semibold text-gray-900 mb-1 flex items-center gap-1.5">
+                <FileText className="w-3.5 h-3.5" />
                 Import Documents
               </h3>
               <FileUpload
@@ -1151,20 +1523,20 @@ export function Batches() {
               />
             </div>
 
-            <div className="flex justify-end gap-2 pt-3 border-t">
+            <div className="flex justify-end gap-2 pt-2 border-t">
               <button
                 type="button"
                 onClick={() => {
                   setModalOpen(false);
                   resetForm();
                 }}
-                className="px-3 py-1.5 text-sm border border-gray-300 rounded hover:bg-gray-50 transition"
+                className="px-3 py-1 text-sm border border-gray-300 rounded hover:bg-gray-50 transition"
               >
                 Cancel
               </button>
               <button
                 type="submit"
-                className="px-3 py-1.5 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition"
+                className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 transition"
               >
                 {editingBatch ? 'Update Batch' : 'Add Batch'}
               </button>
@@ -1199,7 +1571,7 @@ export function Batches() {
                       <span>•</span>
                       <span>{(doc.file_size / 1024).toFixed(1)} KB</span>
                       <span>•</span>
-                      <span>{new Date(doc.uploaded_at).toLocaleDateString()}</span>
+                      <span>{formatDate(doc.uploaded_at)}</span>
                     </div>
                   </div>
                   <ExternalLink className="w-4 h-4 text-gray-400 flex-shrink-0" />
@@ -1209,6 +1581,138 @@ export function Batches() {
               <div className="text-center py-8 text-gray-500">
                 <FileText className="w-12 h-12 mx-auto mb-3 text-gray-300" />
                 <p>No documents uploaded for this batch</p>
+              </div>
+            )}
+          </div>
+        </Modal>
+
+        {/* Transaction History Modal */}
+        <Modal
+          isOpen={transactionHistoryModal}
+          onClose={() => {
+            setTransactionHistoryModal(false);
+            setSelectedProductForHistory(null);
+            setTransactionHistory([]);
+          }}
+          title={`Transaction History - ${selectedProductForHistory?.name || ''} ${selectedProductForHistory?.batchNumber ? `[${selectedProductForHistory.batchNumber}]` : `(${selectedProductForHistory?.code || ''})`}`}
+        >
+          <div className="space-y-3 max-h-[600px] overflow-y-auto">
+            {(() => {
+              const stockTxns = transactionHistory.filter((t: any) => t._type === 'transaction');
+              const resTxns = transactionHistory.filter((t: any) => t._type === 'reservation');
+              const activeRes = resTxns.filter((t: any) => t.status === 'active');
+              const totalIn = stockTxns.filter((t: any) => parseFloat(t.quantity) > 0).reduce((s: number, t: any) => s + parseFloat(t.quantity), 0);
+              const totalOut = stockTxns.filter((t: any) => parseFloat(t.quantity) < 0).reduce((s: number, t: any) => s + Math.abs(parseFloat(t.quantity)), 0);
+              const totalReserved = activeRes.reduce((s: number, t: any) => s + parseFloat(t.quantity), 0);
+              const currentStock = totalIn - totalOut;
+              const freeStock = currentStock - totalReserved;
+
+              return (
+                <>
+                  {selectedProductForHistory?.batchId && transactionHistory.length > 0 && (
+                    <div className="grid grid-cols-4 gap-2 mb-3">
+                      <div className="bg-green-50 border border-green-200 rounded-lg p-2 text-center">
+                        <div className="text-xs text-green-600 font-medium">In</div>
+                        <div className="text-sm font-bold text-green-700">{totalIn.toLocaleString()}</div>
+                      </div>
+                      <div className="bg-red-50 border border-red-200 rounded-lg p-2 text-center">
+                        <div className="text-xs text-red-600 font-medium">Out</div>
+                        <div className="text-sm font-bold text-red-700">{totalOut.toLocaleString()}</div>
+                      </div>
+                      <div className="bg-amber-50 border border-amber-200 rounded-lg p-2 text-center">
+                        <div className="text-xs text-amber-600 font-medium">Reserved</div>
+                        <div className="text-sm font-bold text-amber-700">{totalReserved.toLocaleString()}</div>
+                      </div>
+                      <div className={`${freeStock < 0 ? 'bg-red-50 border-red-200' : 'bg-blue-50 border-blue-200'} border rounded-lg p-2 text-center`}>
+                        <div className={`text-xs font-medium ${freeStock < 0 ? 'text-red-600' : 'text-blue-600'}`}>Free</div>
+                        <div className={`text-sm font-bold ${freeStock < 0 ? 'text-red-700' : 'text-blue-700'}`}>{freeStock.toLocaleString()}</div>
+                      </div>
+                    </div>
+                  )}
+                </>
+              );
+            })()}
+            {transactionHistory.length > 0 ? (
+              <div className="space-y-2">
+                {transactionHistory.map((txn: any) => {
+                  const isReservation = txn._type === 'reservation';
+                  const qty = parseFloat(txn.quantity);
+                  const isPositive = !isReservation && qty > 0;
+                  const isNegative = !isReservation && qty < 0;
+                  const isActiveRes = isReservation && txn.status === 'active';
+                  const isReleasedRes = isReservation && txn.status !== 'active';
+
+                  let bgClass = 'bg-gray-50 border-gray-300';
+                  let qtyColor = 'text-gray-700';
+                  if (isPositive) { bgClass = 'bg-green-50 border-green-500'; qtyColor = 'text-green-700'; }
+                  if (isNegative) { bgClass = 'bg-red-50 border-red-500'; qtyColor = 'text-red-700'; }
+                  if (isActiveRes) { bgClass = 'bg-amber-50 border-amber-500'; qtyColor = 'text-amber-700'; }
+                  if (isReleasedRes) { bgClass = 'bg-gray-50 border-gray-400'; qtyColor = 'text-gray-500'; }
+
+                  return (
+                    <div key={txn.id} className={`p-3 rounded-lg border-l-4 ${bgClass}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className={`font-semibold ${qtyColor}`}>
+                              {isReservation ? (isActiveRes ? `Res: ${qty.toLocaleString()}` : `Res Released: ${qty.toLocaleString()}`) : `${qty > 0 ? '+' : ''}${qty.toFixed(3)}`}
+                            </span>
+                            <span className={`text-xs px-2 py-0.5 rounded uppercase ${
+                              isActiveRes ? 'bg-amber-200 text-amber-800' :
+                              isReleasedRes ? 'bg-gray-200 text-gray-600 line-through' :
+                              'bg-gray-200 text-gray-700'
+                            }`}>
+                              {txn.transaction_type.replace(/_/g, ' ')}
+                            </span>
+                          </div>
+                          <div className="text-sm text-gray-600 space-y-0.5">
+                            {txn.transaction_date && (
+                              <div><strong>Date:</strong> {formatDate(txn.transaction_date)}</div>
+                            )}
+                            {isReservation && txn.so_number && (
+                              <div className="text-xs text-blue-600 font-medium">
+                                SO: {txn.so_number} {txn.customer_name ? `- ${txn.customer_name}` : ''}
+                              </div>
+                            )}
+                            {isReservation && isReleasedRes && txn.release_reason && (
+                              <div className="text-xs text-gray-500">Reason: {txn.release_reason}</div>
+                            )}
+                            {!isReservation && txn.reference_number && (
+                              <div><strong>Reference:</strong> {txn.reference_number}</div>
+                            )}
+                            {!isReservation && txn.delivery_challans && (
+                              <div className="text-xs text-blue-600">
+                                DC: {txn.delivery_challans.challan_number}
+                                {txn.delivery_challans.customers?.company_name && (
+                                  <span className="ml-1">- {txn.delivery_challans.customers.company_name}</span>
+                                )}
+                              </div>
+                            )}
+                            {!isReservation && txn.sales_orders && (
+                              <div className="text-xs text-blue-600">
+                                SO: {txn.sales_orders.so_number}
+                                {txn.sales_orders.customers?.company_name && (
+                                  <span className="ml-1">- {txn.sales_orders.customers.company_name}</span>
+                                )}
+                              </div>
+                            )}
+                            {txn.notes && (
+                              <div className="text-xs text-gray-500 italic">{txn.notes}</div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="text-right text-xs text-gray-400">
+                          {new Date(txn.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="text-center py-8 text-gray-500">
+                <Package className="w-12 h-12 mx-auto mb-3 text-gray-300" />
+                <p>No transactions found for this batch</p>
               </div>
             )}
           </div>

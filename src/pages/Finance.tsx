@@ -1,35 +1,37 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, lazy, Suspense } from 'react';
 import { Layout } from '../components/Layout';
 import { useAuth } from '../contexts/AuthContext';
-import { FinanceProvider, useFinance } from '../contexts/FinanceContext';
-import { Calendar, ChevronDown, ChevronRight } from 'lucide-react';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useFinance } from '../contexts/FinanceContext';
+import { ChevronDown, ChevronRight, Menu, X, Loader } from 'lucide-react';
 
-// Import all finance components
-import { PurchaseInvoiceManager } from '../components/finance/PurchaseInvoiceManager';
-import { ReceiptVoucherManager } from '../components/finance/ReceiptVoucherManager';
-import { PaymentVoucherManager } from '../components/finance/PaymentVoucherManager';
-import { ExpenseManager } from '../components/finance/ExpenseManager';
-import { PettyCashManager } from '../components/finance/PettyCashManager';
-import { FundTransferManager } from '../components/finance/FundTransferManager';
-import { JournalEntryViewerEnhanced as JournalEntryViewer } from '../components/finance/JournalEntryViewerEnhanced';
-import { AccountLedger } from '../components/finance/AccountLedger';
-import PartyLedger from '../components/finance/PartyLedger';
-import BankLedger from '../components/finance/BankLedger';
-import { FinancialReports } from '../components/finance/FinancialReports';
-import { ReceivablesManager } from '../components/finance/ReceivablesManager';
-import { PayablesManager } from '../components/finance/PayablesManager';
-import OutstandingSummary from '../components/finance/OutstandingSummary';
-import { AgeingReport } from './reports/AgeingReport';
-import { BankReconciliationEnhanced as BankReconciliation } from '../components/finance/BankReconciliationEnhanced';
-import { ChartOfAccountsManager } from '../components/finance/ChartOfAccountsManager';
-import { SuppliersManager } from '../components/finance/SuppliersManager';
-import { BankAccountsManager } from '../components/finance/BankAccountsManager';
-import { TaxReports } from '../components/finance/TaxReports';
+const PurchaseInvoiceManager = lazy(() => import('../components/finance/PurchaseInvoiceManager').then(m => ({ default: m.PurchaseInvoiceManager })));
+const ReceiptVoucherManager = lazy(() => import('../components/finance/ReceiptVoucherManager').then(m => ({ default: m.ReceiptVoucherManager })));
+const PaymentVoucherManager = lazy(() => import('../components/finance/PaymentVoucherManager').then(m => ({ default: m.PaymentVoucherManager })));
+const ExpenseManager = lazy(() => import('../components/finance/ExpenseManager').then(m => ({ default: m.ExpenseManager })));
+const PettyCashManager = lazy(() => import('../components/finance/PettyCashManager').then(m => ({ default: m.PettyCashManager })));
+const FundTransferManager = lazy(() => import('../components/finance/FundTransferManager').then(m => ({ default: m.FundTransferManager })));
+const JournalEntryViewer = lazy(() => import('../components/finance/JournalEntryViewerEnhanced').then(m => ({ default: m.JournalEntryViewerEnhanced })));
+const AccountLedger = lazy(() => import('../components/finance/AccountLedger').then(m => ({ default: m.AccountLedger })));
+const PartyLedger = lazy(() => import('../components/finance/PartyLedger'));
+const BankLedger = lazy(() => import('../components/finance/BankLedger'));
+const FinancialReports = lazy(() => import('../components/finance/FinancialReports').then(m => ({ default: m.FinancialReports })));
+const ReceivablesManager = lazy(() => import('../components/finance/ReceivablesManager').then(m => ({ default: m.ReceivablesManager })));
+const PayablesManager = lazy(() => import('../components/finance/PayablesManager').then(m => ({ default: m.PayablesManager })));
+const OutstandingSummary = lazy(() => import('../components/finance/OutstandingSummary'));
+const AgeingReport = lazy(() => import('./reports/AgeingReport').then(m => ({ default: m.AgeingReport })));
+const BankReconciliation = lazy(() => import('../components/finance/BankReconciliationEnhanced').then(m => ({ default: m.BankReconciliationEnhanced })));
+const ChartOfAccountsManager = lazy(() => import('../components/finance/ChartOfAccountsManager').then(m => ({ default: m.ChartOfAccountsManager })));
+const SuppliersManager = lazy(() => import('../components/finance/SuppliersManager').then(m => ({ default: m.SuppliersManager })));
+const BankAccountsManager = lazy(() => import('../components/finance/BankAccountsManager').then(m => ({ default: m.BankAccountsManager })));
+const TaxReports = lazy(() => import('../components/finance/TaxReports').then(m => ({ default: m.TaxReports })));
+const CAReports = lazy(() => import('../components/finance/CAReports').then(m => ({ default: m.CAReports })));
+const GeneralJournalEntry = lazy(() => import('../components/finance/GeneralJournalEntry').then(m => ({ default: m.GeneralJournalEntry })));
 
 type FinanceTab =
   | 'purchase' | 'receipt' | 'payment' | 'journal' | 'contra' | 'expenses' | 'petty_cash'
   | 'ledger' | 'journal_register' | 'bank_ledger' | 'party_ledger' | 'bank_recon'
-  | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax'
+  | 'trial_balance' | 'pnl' | 'balance_sheet' | 'receivables' | 'payables' | 'ageing' | 'tax' | 'ca_reports'
   | 'coa' | 'customers' | 'suppliers' | 'products' | 'banks';
 
 interface MenuItem {
@@ -44,59 +46,80 @@ interface MenuGroup {
   collapsible?: boolean;
 }
 
-const financeMenu: MenuGroup[] = [
+const getFinanceMenu = (t: Record<string, Record<string, string>>): MenuGroup[] => [
   {
-    label: 'VOUCHERS',
+    label: t.finance.vouchers,
     items: [
-      { id: 'purchase', label: 'Purchase', shortcut: 'F9' },
-      { id: 'receipt', label: 'Receipt', shortcut: 'F6' },
-      { id: 'payment', label: 'Payment', shortcut: 'F5' },
-      { id: 'journal', label: 'Journal', shortcut: 'F7' },
-      { id: 'contra', label: 'Contra', shortcut: 'F4' },
-      { id: 'expenses', label: 'Expenses', shortcut: 'F8' },
-      { id: 'petty_cash', label: 'Petty Cash' },
+      { id: 'purchase', label: t.finance.purchase, shortcut: 'F9' },
+      { id: 'receipt', label: t.finance.receipt, shortcut: 'F6' },
+      { id: 'payment', label: t.finance.payment, shortcut: 'F5' },
+      { id: 'journal', label: t.finance.journal, shortcut: 'F7' },
+      { id: 'contra', label: t.finance.contra, shortcut: 'F4' },
+      { id: 'expenses', label: t.finance.expenses, shortcut: 'F8' },
+      { id: 'petty_cash', label: t.finance.pettyCash },
     ]
   },
   {
-    label: 'BOOKS',
+    label: t.finance.books,
     items: [
-      { id: 'ledger', label: 'Ledger', shortcut: 'Ctrl+L' },
-      { id: 'journal_register', label: 'Journal Register', shortcut: 'Ctrl+J' },
-      { id: 'bank_ledger', label: 'Bank Ledger' },
-      { id: 'party_ledger', label: 'Party Ledger' },
-      { id: 'bank_recon', label: 'Bank Reconciliation' },
+      { id: 'ledger', label: t.finance.ledger, shortcut: 'Ctrl+L' },
+      { id: 'journal_register', label: t.finance.journalRegister, shortcut: 'Ctrl+J' },
+      { id: 'bank_ledger', label: t.finance.bankLedger },
+      { id: 'party_ledger', label: t.finance.partyLedger },
+      { id: 'bank_recon', label: t.finance.bankReconciliation },
     ]
   },
   {
-    label: 'REPORTS',
+    label: t.finance.reports,
     collapsible: true,
     items: [
-      { id: 'trial_balance', label: 'Trial Balance' },
-      { id: 'pnl', label: 'Profit & Loss' },
-      { id: 'balance_sheet', label: 'Balance Sheet' },
-      { id: 'receivables', label: 'Receivables' },
-      { id: 'payables', label: 'Payables' },
-      { id: 'ageing', label: 'Ageing' },
-      { id: 'tax', label: 'Tax Reports' },
+      { id: 'ca_reports', label: '📊 ' + t.finance.caReports, shortcut: 'Ctrl+R' },
+      { id: 'trial_balance', label: t.finance.trialBalance },
+      { id: 'pnl', label: t.finance.profitLoss },
+      { id: 'balance_sheet', label: t.finance.balanceSheet },
+      { id: 'receivables', label: t.finance.receivables },
+      { id: 'payables', label: t.finance.payables },
+      { id: 'ageing', label: t.finance.ageing },
+      { id: 'tax', label: t.finance.taxReports },
     ]
   },
   {
-    label: 'MASTERS',
+    label: t.finance.masters,
     collapsible: true,
     items: [
-      { id: 'coa', label: 'Chart of Accounts' },
-      { id: 'suppliers', label: 'Suppliers' },
-      { id: 'banks', label: 'Banks' },
+      { id: 'coa', label: t.finance.chartOfAccounts },
+      { id: 'suppliers', label: t.finance.suppliers },
+      { id: 'banks', label: t.finance.banks },
     ]
   }
 ];
 
 function FinanceContent() {
   const { profile } = useAuth();
-  const { dateRange, setDateRange } = useFinance();
+  const { t } = useLanguage();
+  const { dateRange } = useFinance();
   const [activeTab, setActiveTab] = useState<FinanceTab>('purchase');
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768;
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(isMobile);
+  const [editJournalEntryId, setEditJournalEntryId] = useState<string | null>(null);
+  const [payInvoice, setPayInvoice] = useState<{ id: string; invoice_number: string; supplier_id: string; balance_amount: number } | null>(null);
   const canManage = profile?.role === 'admin' || profile?.role === 'accounts';
+
+  const handlePayInvoice = (invoice: { id: string; invoice_number: string; supplier_id: string; balance_amount: number }) => {
+    setPayInvoice(invoice);
+    setActiveTab('payment');
+  };
+
+  const handleEditJournalEntry = (entryId: string) => {
+    setEditJournalEntryId(entryId);
+    setActiveTab('journal');
+  };
+
+  const financeMenu = useMemo(() => {
+    if (!t || !t.finance) return [];
+    return getFinanceMenu(t);
+  }, [t]);
 
   const toggleGroup = (groupLabel: string) => {
     setCollapsedGroups(prev => {
@@ -159,13 +182,18 @@ function FinanceContent() {
   const renderContent = () => {
     switch (activeTab) {
       case 'purchase':
-        return <PurchaseInvoiceManager canManage={canManage} />;
+        return <PurchaseInvoiceManager canManage={canManage} onPayInvoice={handlePayInvoice} />;
       case 'receipt':
         return <ReceiptVoucherManager canManage={canManage} />;
       case 'payment':
-        return <PaymentVoucherManager canManage={canManage} />;
+        return <PaymentVoucherManager canManage={canManage} prefillInvoice={payInvoice} onPrefillConsumed={() => setPayInvoice(null)} />;
       case 'journal':
-        return <div className="text-center p-8">Manual Journal Entry form coming soon</div>;
+        return <GeneralJournalEntry
+          canManage={canManage}
+          onNavigateToLedger={() => setActiveTab('ledger')}
+          initialEditEntryId={editJournalEntryId}
+          onEditComplete={() => setEditJournalEntryId(null)}
+        />;
       case 'contra':
         return <FundTransferManager canManage={canManage} />;
       case 'expenses':
@@ -175,7 +203,7 @@ function FinanceContent() {
       case 'ledger':
         return <AccountLedger />;
       case 'journal_register':
-        return <JournalEntryViewer canManage={canManage} />;
+        return <JournalEntryViewer canManage={canManage} onEditEntry={handleEditJournalEntry} />;
       case 'bank_ledger':
         return <BankLedger />;
       case 'party_ledger':
@@ -196,6 +224,8 @@ function FinanceContent() {
         return <AgeingReport />;
       case 'tax':
         return <TaxReports />;
+      case 'ca_reports':
+        return <CAReports />;
       case 'coa':
         return <ChartOfAccountsManager canManage={canManage} />;
       case 'suppliers':
@@ -203,101 +233,107 @@ function FinanceContent() {
       case 'banks':
         return <BankAccountsManager canManage={canManage} />;
       default:
-        return <div className="text-center p-8 text-gray-500">Select a module from the menu</div>;
+        return <div className="text-center p-8 text-gray-500">{t?.common?.noData || 'No data available'}</div>;
     }
   };
 
   return (
     <Layout>
       <div className="flex h-screen bg-gray-50">
-        {/* Left Sidebar - Narrow Professional Menu */}
-        <div className="w-56 bg-white border-r border-gray-200 flex flex-col">
-          {/* Menu Groups */}
-          <div className="flex-1 overflow-y-auto">
-            {financeMenu.map((group, groupIdx) => {
-              const isCollapsed = collapsedGroups.has(group.label);
-              const isCollapsible = group.collapsible;
+        {/* Left Sidebar - Compact Menu */}
+        {!sidebarCollapsed && (
+          <div className="fixed inset-0 z-40 bg-black/30 md:hidden" onClick={() => setSidebarCollapsed(true)} />
+        )}
+        <div className={`fixed inset-y-0 left-0 z-50 w-48 bg-white border-r border-gray-200 flex flex-col md:relative md:z-auto transition-transform duration-300 ${sidebarCollapsed ? '-translate-x-full md:translate-x-0' : 'translate-x-0'}`}>
+            {/* Menu Groups */}
+            <div className="flex-1 overflow-y-auto">
+              {financeMenu.map((group, groupIdx) => {
+                const isCollapsed = collapsedGroups.has(group.label);
+                const isCollapsible = group.collapsible;
 
-              return (
-                <div key={group.label} className={groupIdx > 0 ? 'border-t border-gray-200' : ''}>
-                  {isCollapsible ? (
-                    <button
-                      onClick={() => toggleGroup(group.label)}
-                      className="w-full px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between hover:bg-gray-50"
-                    >
-                      <span>{group.label}</span>
-                      {isCollapsed ? (
-                        <ChevronRight className="w-4 h-4" />
-                      ) : (
-                        <ChevronDown className="w-4 h-4" />
-                      )}
-                    </button>
-                  ) : (
-                    <div className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">
-                      {group.label}
-                    </div>
-                  )}
+                return (
+                  <div key={group.label} className={groupIdx > 0 ? 'border-t border-gray-200' : ''}>
+                    {isCollapsible ? (
+                      <button
+                        onClick={() => toggleGroup(group.label)}
+                        className="w-full px-2 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider flex items-center justify-between hover:bg-gray-50"
+                      >
+                        <span>{group.label}</span>
+                        {isCollapsed ? (
+                          <ChevronRight className="w-3 h-3" />
+                        ) : (
+                          <ChevronDown className="w-3 h-3" />
+                        )}
+                      </button>
+                    ) : (
+                      <div className="px-2 py-1.5 text-[10px] font-semibold text-gray-500 uppercase tracking-wider">
+                        {group.label}
+                      </div>
+                    )}
 
-                  {!isCollapsed && (
-                    <div>
-                      {group.items.map((item) => (
-                        <button
-                          key={item.id}
-                          onClick={() => setActiveTab(item.id)}
-                          className={`w-full text-left px-4 py-2 text-sm transition-colors ${
-                            activeTab === item.id
-                              ? 'bg-blue-50 text-blue-700 font-medium border-l-2 border-blue-600'
-                              : 'text-gray-700 hover:bg-gray-50 border-l-2 border-transparent'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span>{item.label}</span>
-                            {item.shortcut && (
-                              <span className="text-xs text-gray-400">{item.shortcut}</span>
-                            )}
-                          </div>
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
-          </div>
+                    {!isCollapsed && (
+                      <div>
+                        {group.items.map((item) => (
+                          <button
+                            key={item.id}
+                            onClick={() => {
+                              setActiveTab(item.id);
+                              if (window.innerWidth < 768) setSidebarCollapsed(true);
+                            }}
+                            className={`w-full text-left px-3 py-1.5 text-xs transition-colors ${
+                              activeTab === item.id
+                                ? 'bg-blue-50 text-blue-700 font-medium border-l-2 border-blue-600'
+                                : 'text-gray-700 hover:bg-gray-50 border-l-2 border-transparent'
+                            }`}
+                          >
+                            <div className="flex items-center justify-between">
+                              <span>{item.label}</span>
+                              {item.shortcut && (
+                                <span className="text-[10px] text-gray-400">{item.shortcut}</span>
+                              )}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
         </div>
 
         {/* Main Content Area */}
         <div className="flex-1 flex flex-col overflow-hidden">
-          {/* Top Bar - Global Date Range ONLY */}
-          <div className="bg-white border-b border-gray-200 px-6 py-3 flex items-center justify-between">
-            <h1 className="text-lg font-semibold text-gray-900">Finance & Accounting</h1>
-
-            {/* SINGLE GLOBAL DATE RANGE */}
-            <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded border border-gray-300">
-              <Calendar className="w-4 h-4 text-gray-500" />
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-gray-600">Period:</span>
-                <input
-                  type="date"
-                  value={dateRange.startDate}
-                  onChange={(e) => setDateRange({ ...dateRange, startDate: e.target.value })}
-                  className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-                <span className="text-gray-500">to</span>
-                <input
-                  type="date"
-                  value={dateRange.endDate}
-                  onChange={(e) => setDateRange({ ...dateRange, endDate: e.target.value })}
-                  className="px-2 py-1 text-sm border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                />
-              </div>
-            </div>
+          {/* Top Bar */}
+          <div className="bg-white border-b border-gray-200 px-3 md:px-6 py-3 flex items-center gap-3">
+            <button
+              onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
+              className="p-1.5 hover:bg-gray-100 rounded transition-colors"
+              title={sidebarCollapsed ? 'Show Menu' : 'Hide Menu'}
+            >
+              {sidebarCollapsed ? <Menu className="w-5 h-5 text-gray-600" /> : <X className="w-5 h-5 text-gray-600" />}
+            </button>
+            <h1 className="text-base md:text-lg font-semibold text-gray-900 truncate">
+              <span className="hidden md:inline">{t.finance.title}</span>
+              <span className="md:hidden">
+                {financeMenu.flatMap(g => g.items).find(i => i.id === activeTab)?.label ?? t.finance.title}
+              </span>
+            </h1>
+            <span className="text-xs text-gray-400 ml-2 hidden md:inline">
+              {dateRange.startDate} to {dateRange.endDate}
+            </span>
           </div>
 
           {/* Content Area - Pure White Background */}
           <div className="flex-1 overflow-auto bg-white">
-            <div className="p-6">
-              {renderContent()}
+            <div className="p-3 md:p-6">
+              <Suspense fallback={
+                <div className="flex items-center justify-center py-12">
+                  <Loader className="w-6 h-6 animate-spin text-blue-600" />
+                </div>
+              }>
+                {renderContent()}
+              </Suspense>
             </div>
           </div>
         </div>
@@ -307,9 +343,5 @@ function FinanceContent() {
 }
 
 export function Finance() {
-  return (
-    <FinanceProvider>
-      <FinanceContent />
-    </FinanceProvider>
-  );
+  return <FinanceContent />;
 }

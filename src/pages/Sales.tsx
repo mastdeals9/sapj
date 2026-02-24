@@ -8,13 +8,18 @@ import { SearchableSelect } from '../components/SearchableSelect';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { useNavigation } from '../contexts/NavigationContext';
+import { useFinance } from '../contexts/FinanceContext';
 import { supabase } from '../lib/supabase';
 import { Plus, Edit, Trash2, FileText, Eye, FileX } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { formatDate } from '../utils/dateFormat';
 
 interface SalesInvoice {
   id: string;
   invoice_number: string;
   customer_id: string;
+  sales_order_id?: string | null;
   invoice_date: string;
   due_date: string;
   subtotal: number;
@@ -33,6 +38,15 @@ interface SalesInvoice {
     company_name: string;
     gst_vat_type: string;
   };
+}
+
+interface SalesOrderOption {
+  id: string;
+  so_number: string;
+  total_amount: number;
+  advance_payment_amount: number;
+  advance_payment_status: string;
+  status: string;
 }
 
 interface InvoiceItem {
@@ -137,12 +151,15 @@ export function Sales() {
   const { t } = useLanguage();
   const { profile } = useAuth();
   const { navigationData, clearNavigationData, setCurrentPage } = useNavigation();
+  const { dateRange } = useFinance();
   const [invoices, setInvoices] = useState<SalesInvoice[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
   const [batches, setBatches] = useState<Batch[]>([]);
   const [pendingChallans, setPendingChallans] = useState<DeliveryChallan[]>([]);
   const [pendingDCOptions, setPendingDCOptions] = useState<Array<{ challan_id: string; challan_number: string; challan_date: string; item_count: number }>>([]);
+  const [customerSalesOrders, setCustomerSalesOrders] = useState<SalesOrderOption[]>([]);
+  const [selectedSOId, setSelectedSOId] = useState<string>('');
   const [selectedDCIds, setSelectedDCIds] = useState<string[]>([]);
   const [selectedChallanId, setSelectedChallanId] = useState<string>('');
   const [pendingDCsWithItems, setPendingDCsWithItems] = useState<DCWithItems[]>([]);
@@ -178,7 +195,7 @@ export function Sales() {
     loadCustomers();
     loadProducts();
     loadBatches();
-  }, []);
+  }, [dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
     if (navigationData?.sourceType === 'delivery_challan') {
@@ -244,6 +261,8 @@ export function Sales() {
       const { data, error } = await supabase
         .from('sales_invoices')
         .select('*, customers(company_name, address, city, phone, npwp, pharmacy_license, gst_vat_type)')
+        .gte('invoice_date', dateRange.startDate)
+        .lte('invoice_date', dateRange.endDate)
         .order('invoice_date', { ascending: false });
 
       if (error) throw error;
@@ -277,9 +296,9 @@ export function Sales() {
       const { data: settings } = await supabase
         .from('app_settings')
         .select('invoice_prefix, invoice_start_number')
+        .limit(1)
         .maybeSingle();
 
-      const prefix = settings?.invoice_prefix || 'SAPJ';
       const startNumber = settings?.invoice_start_number || 1;
 
       // Get current financial year automatically
@@ -289,8 +308,12 @@ export function Sales() {
       if (fyError) {
         console.error('Error getting financial year:', fyError);
         const fallbackYear = new Date().getFullYear().toString().slice(-2);
-        return `${prefix}-${fallbackYear}-001`;
+        return `SAPJ-${fallbackYear}-001`;
       }
+
+      // Strip year suffix from prefix if someone saved it with year already embedded (e.g. "SAPJ-26" -> "SAPJ")
+      const rawPrefix = settings?.invoice_prefix || 'SAPJ';
+      const prefix = rawPrefix.replace(new RegExp(`-${yearCode}$`), '');
 
       // Get all invoice numbers with this prefix and year to find the highest number
       const { data: allInvoices } = await supabase
@@ -398,6 +421,24 @@ export function Sales() {
     } catch (error) {
       console.error('Error loading pending challans:', error);
       setPendingChallans([]);
+    }
+  };
+
+  const loadCustomerSalesOrders = async (customerId: string) => {
+    try {
+      const { data, error } = await supabase
+        .from('sales_orders')
+        .select('id, so_number, total_amount, advance_payment_amount, advance_payment_status, status')
+        .eq('customer_id', customerId)
+        .eq('is_archived', false)
+        .in('status', ['approved', 'stock_reserved', 'shortage', 'pending_delivery', 'partially_delivered', 'delivered'])
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+      setCustomerSalesOrders(data || []);
+    } catch (error) {
+      console.error('Error loading customer sales orders:', error);
+      setCustomerSalesOrders([]);
     }
   };
 
@@ -584,7 +625,7 @@ export function Sales() {
       const selectedChallan = pendingChallans.find(ch => ch.id === challanId);
       if (!selectedChallan) {
         console.error('Selected challan not found in pending challans list');
-        alert('Error: Selected delivery challan not found. Please refresh and try again.');
+        showToast({ type: 'error', title: 'Error', message: 'Selected delivery challan not found. Please refresh and try again.' });
         return;
       }
 
@@ -605,7 +646,7 @@ export function Sales() {
 
       if (!challanItems || challanItems.length === 0) {
         console.warn('No items found for this delivery challan');
-        alert('This delivery challan has no items. Please add items manually.');
+        showToast({ type: 'info', title: 'Info', message: 'This delivery challan has no items. Please add items manually.' });
         return;
       }
 
@@ -640,14 +681,14 @@ export function Sales() {
       }
 
       if (invoiceItems.length === 0) {
-        alert('Could not load items from delivery challan. Please add items manually.');
+        showToast({ type: 'error', title: 'Error', message: 'Could not load items from delivery challan. Please add items manually.' });
         return;
       }
 
       setItems(invoiceItems);
     } catch (error: any) {
       console.error('Error loading challan items:', error);
-      alert(`Failed to load delivery challan items: ${error.message || 'Unknown error'}. Please try again or add items manually.`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to load delivery challan items: ${error.message || 'Unknown error'}. Please try again or add items manually.` });
     }
   };
 
@@ -815,7 +856,7 @@ export function Sales() {
       // Validate that invoice has at least one item with a product selected
       const validItems = items.filter(item => item.product_id && item.product_id.trim() !== '');
       if (validItems.length === 0) {
-        alert('Please add at least one product to the invoice before saving.');
+        showToast({ type: 'error', title: 'Error', message: 'Please add at least one product to the invoice before saving.' });
         return;
       }
 
@@ -912,6 +953,7 @@ export function Sales() {
           .insert([{
             invoice_number: invoiceNumber,
             customer_id: formData.customer_id,
+            sales_order_id: selectedSOId || null,
             invoice_date: formData.invoice_date,
             due_date: dueDate.toISOString().split('T')[0],
             discount_amount: formData.discount,
@@ -976,7 +1018,7 @@ export function Sales() {
       resetForm();
     } catch (error: any) {
       console.error('Error saving invoice:', error);
-      alert(`Failed to save invoice: ${error.message || 'Unknown error'}. Please check console for details.`);
+      showToast({ type: 'error', title: 'Error', message: `Failed to save invoice: ${error.message || 'Unknown error'}. Please check console for details.` });
     }
   };
 
@@ -1030,7 +1072,7 @@ export function Sales() {
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this invoice?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this invoice?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -1042,7 +1084,7 @@ export function Sales() {
       loadInvoices();
     } catch (error) {
       console.error('Error deleting invoice:', error);
-      alert('Failed to delete invoice. Please try again.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete invoice. Please try again.' });
     }
   };
 
@@ -1057,7 +1099,7 @@ export function Sales() {
       loadInvoices();
     } catch (error) {
       console.error('Error updating payment status:', error);
-      alert('Failed to update payment status.');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to update payment status.' });
     }
   };
 
@@ -1067,6 +1109,8 @@ export function Sales() {
     setPendingChallans([]);
     setPendingDCOptions([]);
     setSelectedDCIds([]);
+    setSelectedSOId('');
+    setCustomerSalesOrders([]);
     setFormData({
       invoice_number: '',
       customer_id: '',
@@ -1088,30 +1132,30 @@ export function Sales() {
   };
 
   const columns = [
-    { key: 'invoice_number', label: 'Invoice #' },
+    { key: 'invoice_number', label: t('sales.invoiceNumber') },
     {
       key: 'customer',
-      label: 'Customer',
-      render: (inv: SalesInvoice) => (
+      label: t('sales.customer'),
+      render: (value: any, inv: SalesInvoice) => (
         <div className="font-medium">{inv.customers?.company_name}</div>
       )
     },
     {
       key: 'invoice_date',
-      label: 'Date',
-      render: (inv: SalesInvoice) => new Date(inv.invoice_date).toLocaleDateString()
+      label: t('common.date'),
+      render: (value: any, inv: SalesInvoice) => formatDate(inv.invoice_date)
     },
     {
       key: 'total_amount',
-      label: 'Total Amount',
-      render: (inv: SalesInvoice) => (
+      label: t('common.total'),
+      render: (value: any, inv: SalesInvoice) => (
         <span className="font-medium">Rp {inv.total_amount.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
       )
     },
     {
       key: 'paid_amount',
-      label: 'Paid Amount',
-      render: (inv: SalesInvoice) => (
+      label: t('sales.paidAmount'),
+      render: (value: any, inv: SalesInvoice) => (
         <span className="text-green-600 font-medium">
           Rp {(inv.paid_amount || 0).toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
         </span>
@@ -1119,8 +1163,8 @@ export function Sales() {
     },
     {
       key: 'balance_amount',
-      label: 'Balance',
-      render: (inv: SalesInvoice) => (
+      label: t('sales.balance'),
+      render: (value: any, inv: SalesInvoice) => (
         <span className={`font-medium ${
           (inv.balance_amount || 0) === 0 ? 'text-gray-400' : 'text-orange-600'
         }`}>
@@ -1130,21 +1174,21 @@ export function Sales() {
     },
     {
       key: 'payment_status',
-      label: 'Payment Status',
-      render: (inv: SalesInvoice) => (
+      label: t('sales.paymentStatus'),
+      render: (value: any, inv: SalesInvoice) => (
         <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
           inv.payment_status === 'paid' ? 'bg-green-100 text-green-800' :
           inv.payment_status === 'partial' ? 'bg-yellow-100 text-yellow-800' :
           'bg-red-100 text-red-800'
         }`}>
-          {inv.payment_status === 'pending' ? 'Unpaid' :
-           inv.payment_status === 'partial' ? 'Partially Paid' : 'Paid'}
+          {inv.payment_status === 'pending' ? t('common.unpaid') :
+           inv.payment_status === 'partial' ? t('common.partial') : t('common.paid')}
         </span>
       )
     },
   ];
 
-  const canManage = profile?.role === 'admin' || profile?.role === 'accounts' || profile?.role === 'sales';
+  const canManage = profile?.role === 'admin' || profile?.role === 'accounts' || profile?.role === 'sales' || profile?.role === 'warehouse';
 
   const stats = {
     total: invoices.length,
@@ -1158,8 +1202,8 @@ export function Sales() {
       <div className="space-y-6">
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Sales Invoices</h1>
-            <p className="text-gray-600 mt-1">Manage sales invoices and track payments</p>
+            <h1 className="text-3xl font-bold text-gray-900">{t('sales.title')}</h1>
+            <p className="text-gray-600 mt-1">{t('sales.invoices')}</p>
           </div>
           {canManage && (
             <div className="flex gap-3">
@@ -1173,7 +1217,7 @@ export function Sales() {
                 className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
               >
                 <Plus className="w-5 h-5" />
-                Create Invoice
+                {t('sales.createInvoice')}
               </button>
               <button
                 onClick={() => {
@@ -1182,7 +1226,7 @@ export function Sales() {
                 className="flex items-center gap-2 bg-red-600 text-white px-4 py-2 rounded-lg hover:bg-red-700 transition"
               >
                 <FileX className="w-5 h-5" />
-                Credit Notes
+                {t('nav.creditNotes')}
               </button>
             </div>
           )}
@@ -1190,19 +1234,19 @@ export function Sales() {
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <div className="bg-white rounded-lg shadow p-6">
-            <p className="text-sm text-gray-600">Total Invoices</p>
+            <p className="text-sm text-gray-600">{t('sales.invoices')}</p>
             <p className="text-2xl font-bold text-gray-900 mt-1">{stats.total}</p>
           </div>
           <div className="bg-blue-50 rounded-lg shadow p-6">
-            <p className="text-sm text-blue-600">Total Revenue</p>
+            <p className="text-sm text-blue-600">{t('common.total')}</p>
             <p className="text-2xl font-bold text-blue-600 mt-1">Rp {stats.totalRevenue.toLocaleString('id-ID', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
           </div>
           <div className="bg-red-50 rounded-lg shadow p-6">
-            <p className="text-sm text-red-600">Pending Payment</p>
+            <p className="text-sm text-red-600">{t('common.pending')}</p>
             <p className="text-2xl font-bold text-red-600 mt-1">{stats.pending}</p>
           </div>
           <div className="bg-green-50 rounded-lg shadow p-6">
-            <p className="text-sm text-green-600">Paid</p>
+            <p className="text-sm text-green-600">{t('common.paid')}</p>
             <p className="text-2xl font-bold text-green-600 mt-1">{stats.paid}</p>
           </div>
         </div>
@@ -1211,31 +1255,35 @@ export function Sales() {
           columns={columns}
           data={invoices}
           loading={loading}
-          actions={canManage ? (invoice) => (
+          actions={(invoice) => (
             <div className="flex items-center gap-2">
               <button
                 onClick={() => handleView(invoice)}
                 className="p-1 text-blue-600 hover:bg-blue-50 rounded"
-                title="View Invoice"
+                title={t('common.view')}
               >
                 <Eye className="w-4 h-4" />
               </button>
-              <button
-                onClick={() => handleEdit(invoice)}
-                className="p-1 text-green-600 hover:bg-green-50 rounded"
-                title="Edit Invoice"
-              >
-                <Edit className="w-4 h-4" />
-              </button>
-              <button
-                onClick={() => handleDelete(invoice.id)}
-                className="p-1 text-red-600 hover:bg-red-50 rounded"
-                title="Delete Invoice"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
+              {canManage && (
+                <>
+                  <button
+                    onClick={() => handleEdit(invoice)}
+                    className="p-1 text-green-600 hover:bg-green-50 rounded"
+                    title={t('common.edit')}
+                  >
+                    <Edit className="w-4 h-4" />
+                  </button>
+                  <button
+                    onClick={() => handleDelete(invoice.id)}
+                    className="p-1 text-red-600 hover:bg-red-50 rounded"
+                    title={t('common.delete')}
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </>
+              )}
             </div>
-          ) : undefined}
+          )}
         />
 
         <Modal
@@ -1244,14 +1292,14 @@ export function Sales() {
             setModalOpen(false);
             resetForm();
           }}
-          title={editingInvoice ? "Edit Sales Invoice" : "Create Sales Invoice"}
+          title={editingInvoice ? t('sales.editInvoice') : t('sales.createInvoice')}
           size="xl"
         >
           <form onSubmit={handleSubmit} className="space-y-3">
             <div className="space-y-2">
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Invoice No *</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">{t('sales.invoiceNumber')} *</label>
                   <input
                     type="text"
                     value={formData.invoice_number}
@@ -1290,7 +1338,7 @@ export function Sales() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Customer *</label>
                   <SearchableSelect
@@ -1300,6 +1348,8 @@ export function Sales() {
                       setSelectedChallanId('');
                       setPendingChallans([]);
                       setSelectedDCIds([]);
+                      setSelectedSOId('');
+                      setCustomerSalesOrders([]);
                       setItems([{
                         product_id: '',
                         batch_id: null,
@@ -1310,8 +1360,10 @@ export function Sales() {
                       }]);
                       if (customerId) {
                         loadPendingDCOptions(customerId);
+                        loadCustomerSalesOrders(customerId);
                       } else {
                         setPendingDCOptions([]);
+                        setCustomerSalesOrders([]);
                       }
                     }}
                     options={customers.map(c => ({ value: c.id, label: c.company_name }))}
@@ -1341,7 +1393,60 @@ export function Sales() {
                 </div>
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              {customerSalesOrders.length > 0 && !editingInvoice && (
+                <div className="p-3 bg-blue-50 border-2 border-blue-200 rounded-lg">
+                  <label className="block text-sm font-bold text-blue-900 mb-2">
+                    🔗 Link to Sales Order (for advance payment tracking)
+                  </label>
+                  <select
+                    value={selectedSOId}
+                    onChange={(e) => setSelectedSOId(e.target.value)}
+                    className="w-full px-3 py-2 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-medium"
+                  >
+                    <option value="">-- Select Sales Order (if this invoice is from an SO) --</option>
+                    {customerSalesOrders.map(so => (
+                      <option key={so.id} value={so.id}>
+                        {so.so_number} - Rp {so.total_amount.toLocaleString('id-ID')}
+                        {so.advance_payment_amount > 0
+                          ? ` 💰 ADVANCE PAID: Rp ${so.advance_payment_amount.toLocaleString('id-ID')}`
+                          : ' (No advance)'}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedSOId && (() => {
+                    const so = customerSalesOrders.find(s => s.id === selectedSOId);
+                    if (so && so.advance_payment_amount > 0) {
+                      return (
+                        <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded">
+                          <p className="text-sm font-bold text-green-800">
+                            ✅ Advance Payment: Rp {so.advance_payment_amount.toLocaleString('id-ID')} will be automatically applied to this invoice
+                          </p>
+                          <p className="text-xs text-green-700 mt-1">
+                            The invoice payment status will be updated automatically after saving.
+                          </p>
+                        </div>
+                      );
+                    }
+                    if (selectedSOId) {
+                      return (
+                        <p className="text-xs text-blue-600 mt-2">
+                          ℹ️ This SO has no advance payment recorded.
+                        </p>
+                      );
+                    }
+                    return null;
+                  })()}
+                  {customerSalesOrders.some(so => so.advance_payment_amount > 0) && !selectedSOId && (
+                    <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded">
+                      <p className="text-xs font-medium text-amber-800">
+                        ⚠️ IMPORTANT: This customer has Sales Orders with advance payments. Select the correct SO above to apply advance payment to this invoice!
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Notes</label>
                   <input
@@ -1416,7 +1521,8 @@ export function Sales() {
                           </button>
                         )}
                       </div>
-                      <div className="grid grid-cols-12 gap-2 items-end">
+                      <div className="overflow-x-auto">
+                      <div className="grid grid-cols-12 gap-2 items-end min-w-[700px]">
                         <div className="col-span-3">
                           <label className="block text-xs text-gray-600 mb-1">Product *</label>
                           <select
@@ -1519,6 +1625,7 @@ export function Sales() {
                             <Trash2 className="w-4 h-4" />
                           </button>
                         )}
+                      </div>
                       </div>
                       </div>
 

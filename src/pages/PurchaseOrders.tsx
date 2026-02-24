@@ -1,11 +1,16 @@
 import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
+import { useLanguage } from '../contexts/LanguageContext';
+import { useFinance } from '../contexts/FinanceContext';
 import { Layout } from '../components/Layout';
 import { FileText, Plus, Search, Eye, Edit, Trash2, CheckCircle, XCircle, Download, Package } from 'lucide-react';
 import { Modal } from '../components/Modal';
 import { PurchaseOrderView } from '../components/PurchaseOrderView';
 import { SearchableSelect } from '../components/SearchableSelect';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { formatDate } from '../utils/dateFormat';
 
 interface Supplier {
   id: string;
@@ -69,6 +74,8 @@ interface PurchaseOrder {
 
 export default function PurchaseOrders() {
   const { user, profile } = useAuth();
+  const { t } = useLanguage();
+  const { dateRange } = useFinance();
   const [purchaseOrders, setPurchaseOrders] = useState<PurchaseOrder[]>([]);
   const [filteredPOs, setFilteredPOs] = useState<PurchaseOrder[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
@@ -115,7 +122,7 @@ export default function PurchaseOrders() {
     fetchPurchaseOrders();
     fetchSuppliers();
     fetchProducts();
-  }, []);
+  }, [dateRange.startDate, dateRange.endDate]);
 
   useEffect(() => {
     filterPOs();
@@ -146,13 +153,15 @@ export default function PurchaseOrders() {
             )
           )
         `)
+        .gte('po_date', dateRange.startDate)
+        .lte('po_date', dateRange.endDate)
         .order('created_at', { ascending: false });
 
       if (error) throw error;
       setPurchaseOrders(data || []);
     } catch (error: any) {
       console.error('Error fetching purchase orders:', error.message);
-      alert('Failed to load purchase orders');
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToLoadPurchaseOrders') });
     } finally {
       setLoading(false);
     }
@@ -207,9 +216,9 @@ export default function PurchaseOrders() {
 
   const getStatusBadge = (status: string) => {
     const statusConfig: Record<string, { color: string; label: string }> = {
-      draft: { color: 'bg-gray-100 text-gray-800', label: 'Draft' },
-      pending_approval: { color: 'bg-yellow-100 text-yellow-800', label: 'Pending Approval' },
-      approved: { color: 'bg-green-100 text-green-800', label: 'Approved' },
+      draft: { color: 'bg-gray-100 text-gray-800', label: t('common.draft') },
+      pending_approval: { color: 'bg-yellow-100 text-yellow-800', label: t('common.pending') },
+      approved: { color: 'bg-green-100 text-green-800', label: t('common.approved') },
       partially_received: { color: 'bg-blue-100 text-blue-800', label: 'Partially Received' },
       received: { color: 'bg-purple-100 text-purple-800', label: 'Received' },
       cancelled: { color: 'bg-red-100 text-red-800', label: 'Cancelled' },
@@ -340,32 +349,32 @@ export default function PurchaseOrders() {
     e.preventDefault();
 
     if (!formData.supplier_id) {
-      alert('Please select a supplier');
+      showToast({ type: 'error', title: 'Error', message: t('validation.selectSupplier') });
       return;
     }
 
     if (!formData.po_date) {
-      alert('Please select a PO date');
+      showToast({ type: 'error', title: 'Error', message: t('validation.selectDate') });
       return;
     }
 
     if (poItems.length === 0 || !poItems[0].product_id) {
-      alert('Please add at least one product');
+      showToast({ type: 'error', title: 'Error', message: t('validation.addAtLeastOneProduct') });
       return;
     }
 
     for (let i = 0; i < poItems.length; i++) {
       const item = poItems[i];
       if (!item.product_id) {
-        alert(`Please select a product for line ${i + 1}`);
+        showToast({ type: 'error', title: 'Error', message: t('validation.selectProductForLine') + ` ${i + 1}` });
         return;
       }
       if (item.quantity <= 0) {
-        alert(`Please enter a valid quantity for line ${i + 1}`);
+        showToast({ type: 'error', title: 'Error', message: t('validation.enterValidQuantityForLine') + ` ${i + 1}` });
         return;
       }
       if (item.unit_price <= 0) {
-        alert(`Please enter a valid unit price for line ${i + 1}`);
+        showToast({ type: 'error', title: 'Error', message: t('validation.enterValidPriceForLine') + ` ${i + 1}` });
         return;
       }
     }
@@ -421,7 +430,7 @@ export default function PurchaseOrders() {
 
         if (itemsError) throw itemsError;
 
-        alert('Purchase Order updated successfully!');
+        showToast({ type: 'success', title: 'Success', message: t('success.saved') });
       } else {
         // Create new PO
         const { data: newPO, error: poError } = await supabase
@@ -456,19 +465,19 @@ export default function PurchaseOrders() {
 
         if (itemsError) throw itemsError;
 
-        alert('Purchase Order created successfully!');
+        showToast({ type: 'success', title: 'Success', message: t('success.saved') });
       }
 
       setShowCreateModal(false);
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error saving purchase order:', error);
-      alert('Failed to save purchase order: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToSave') + ': ' + error.message });
     }
   };
 
   const handleApprove = async (poId: string) => {
-    if (!confirm('Approve this Purchase Order?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this Purchase Order?', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -482,16 +491,16 @@ export default function PurchaseOrders() {
 
       if (error) throw error;
 
-      alert('Purchase Order approved successfully!');
+      showToast({ type: 'success', title: 'Success', message: t('success.saved') });
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error approving PO:', error);
-      alert('Failed to approve PO: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToSave') + ': ' + error.message });
     }
   };
 
   const handleDelete = async (poId: string) => {
-    if (!confirm('Are you sure you want to delete this Purchase Order?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this Purchase Order?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -501,11 +510,11 @@ export default function PurchaseOrders() {
 
       if (error) throw error;
 
-      alert('Purchase Order deleted successfully!');
+      showToast({ type: 'success', title: 'Success', message: t('success.deleted') });
       fetchPurchaseOrders();
     } catch (error: any) {
       console.error('Error deleting PO:', error);
-      alert('Failed to delete PO: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: t('errors.failedToDelete') + ': ' + error.message });
     }
   };
 
@@ -533,17 +542,19 @@ export default function PurchaseOrders() {
             <h1 className="text-2xl font-bold text-gray-900">Purchase Orders</h1>
             <p className="text-gray-600">Manage procurement from suppliers</p>
           </div>
-          <button
-            onClick={handleCreateNew}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
-          >
-            <Plus className="h-5 w-5" />
-            New Purchase Order
-          </button>
+          {profile?.role !== 'auditor_ca' && (
+            <button
+              onClick={handleCreateNew}
+              className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            >
+              <Plus className="h-5 w-5" />
+              New Purchase Order
+            </button>
+          )}
         </div>
 
         {/* Filters */}
-        <div className="mb-6 flex gap-4">
+        <div className="mb-6 flex flex-col md:flex-row gap-4">
           <div className="flex-1">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-5 w-5" />
@@ -573,6 +584,7 @@ export default function PurchaseOrders() {
 
         {/* Table */}
         <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
@@ -592,7 +604,7 @@ export default function PurchaseOrders() {
                     {po.po_number}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {new Date(po.po_date).toLocaleDateString()}
+                    {formatDate(po.po_date)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {po.suppliers?.company_name}
@@ -636,7 +648,7 @@ export default function PurchaseOrders() {
                       >
                         <Eye className="h-5 w-5" />
                       </button>
-                      {po.status === 'draft' && (
+                      {po.status === 'draft' && profile?.role !== 'auditor_ca' && (
                         <>
                           <button
                             onClick={() => handleEdit(po)}
@@ -669,6 +681,7 @@ export default function PurchaseOrders() {
               ))}
             </tbody>
           </table>
+          </div>
           {filteredPOs.length === 0 && (
             <div className="text-center py-12 text-gray-500">
               No purchase orders found
@@ -686,7 +699,7 @@ export default function PurchaseOrders() {
           >
             <form onSubmit={handleSubmit} className="space-y-4">
               {/* Header Section - Compact */}
-              <div className="grid grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Supplier *</label>
                   <SearchableSelect
@@ -720,7 +733,7 @@ export default function PurchaseOrders() {
               </div>
 
               {/* Currency and Payment Terms - Compact */}
-              <div className="grid grid-cols-6 gap-3">
+              <div className="grid grid-cols-1 md:grid-cols-6 gap-3">
                 <div className="col-span-1">
                   <label className="block text-xs font-medium text-gray-700 mb-1">Currency</label>
                   <select

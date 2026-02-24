@@ -3,8 +3,11 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { AlertTriangle, Plus, Search, CheckCircle, XCircle, Clock, Upload, Eye, Camera, FileText, Edit, Trash2 } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 import { Modal } from '../components/Modal';
 import { StockRejectionView } from '../components/StockRejectionView';
+import { formatDate } from '../utils/dateFormat';
 
 interface StockRejection {
   id: string;
@@ -96,7 +99,7 @@ export default function StockRejections() {
       setRejections(data || []);
     } catch (error: any) {
       console.error('Error fetching rejections:', error);
-      alert(t('errorFetchingRejections') || 'Error fetching rejections');
+      showToast({ type: 'error', title: 'Error', message: t('errorFetchingRejections') || 'Error fetching rejections' });
     } finally {
       setLoading(false);
     }
@@ -192,12 +195,12 @@ export default function StockRejections() {
       setShowCreateModal(true);
     } catch (error) {
       console.error('Error loading rejection for edit:', error);
-      alert('Failed to load rejection for editing');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load rejection for editing' });
     }
   };
 
   const handleDelete = async (id: string, photos: any[]) => {
-    if (!confirm('Are you sure you want to delete this stock rejection? This action cannot be undone.')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this stock rejection? This action cannot be undone.', variant: 'danger', confirmLabel: 'Delete' })) {
       return;
     }
 
@@ -223,11 +226,11 @@ export default function StockRejections() {
 
       if (error) throw error;
 
-      alert('Stock rejection deleted successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Stock rejection deleted successfully' });
       fetchRejections();
     } catch (error: any) {
       console.error('Error deleting rejection:', error);
-      alert(error.message || 'Failed to delete stock rejection');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to delete stock rejection' });
     }
   };
 
@@ -263,22 +266,19 @@ export default function StockRejections() {
     e.preventDefault();
 
     if (!formData.product_id || !formData.batch_id || !formData.rejection_details) {
-      alert(t('pleaseCompleteAllFields') || 'Please complete all required fields');
+      showToast({ type: 'error', title: 'Error', message: t('pleaseCompleteAllFields') || 'Please complete all required fields' });
       return;
     }
 
     try {
       const selectedBatch = batches.find(b => b.id === formData.batch_id);
       if (!selectedBatch) {
-        alert(t('invalidBatch') || 'Invalid batch selected');
+        showToast({ type: 'error', title: 'Error', message: t('invalidBatch') || 'Invalid batch selected' });
         return;
       }
 
       if (formData.quantity_rejected > selectedBatch.current_stock) {
-        alert(
-          t('quantityExceedsStock') ||
-          `Rejection quantity cannot exceed available stock (${selectedBatch.current_stock})`
-        );
+        showToast({ type: 'error', title: 'Error', message: t('quantityExceedsStock') || `Rejection quantity cannot exceed available stock (${selectedBatch.current_stock})` });
         return;
       }
 
@@ -318,7 +318,7 @@ export default function StockRejections() {
             .eq('id', editingRejectionId);
         }
 
-        alert('Stock rejection updated successfully');
+        showToast({ type: 'success', title: 'Success', message: 'Stock rejection updated successfully' });
       } else {
         const { data: rejectionData, error: rejectionError } = await supabase
           .from('stock_rejections')
@@ -357,7 +357,7 @@ export default function StockRejections() {
           });
         }
 
-        alert(t('rejectionCreatedSuccessfully') || 'Stock rejection created successfully');
+        showToast({ type: 'success', title: 'Success', message: t('rejectionCreatedSuccessfully') || 'Stock rejection created successfully' });
       }
 
       setShowCreateModal(false);
@@ -365,7 +365,7 @@ export default function StockRejections() {
       fetchRejections();
     } catch (error: any) {
       console.error('Error saving rejection:', error);
-      alert(error.message || t('errorCreatingRejection') || 'Error saving stock rejection');
+      showToast({ type: 'error', title: 'Error', message: error.message || t('errorCreatingRejection') || 'Error saving stock rejection' });
     }
   };
 
@@ -497,7 +497,7 @@ export default function StockRejections() {
                     {rejection.rejection_number}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
-                    {new Date(rejection.rejection_date).toLocaleDateString()}
+                    {formatDate(rejection.rejection_date)}
                   </td>
                   <td className="px-4 py-3 text-sm text-gray-900">
                     <div>{rejection.product.product_name}</div>

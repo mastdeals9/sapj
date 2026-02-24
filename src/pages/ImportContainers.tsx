@@ -4,6 +4,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { Layout } from '../components/Layout';
 import { Package, Plus, Eye, Edit, Lock, CheckCircle, AlertCircle } from 'lucide-react';
 import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
+import { formatDate } from '../utils/dateFormat';
 
 interface Supplier {
   id: string;
@@ -145,7 +149,7 @@ export default function ImportContainers() {
       setContainers(containersWithExpenses);
     } catch (error: any) {
       console.error('Error fetching containers:', error.message);
-      alert('Failed to load import containers');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load import containers' });
     } finally {
       setLoading(false);
     }
@@ -182,14 +186,14 @@ export default function ImportContainers() {
           .eq('id', editingContainer.id);
 
         if (error) throw error;
-        alert('Container updated successfully');
+        showToast({ type: 'success', title: 'Success', message: 'Container updated successfully' });
       } else {
         const { error } = await supabase
           .from('import_containers')
           .insert([containerData]);
 
         if (error) throw error;
-        alert('Container created successfully');
+        showToast({ type: 'success', title: 'Success', message: 'Container created successfully' });
       }
 
       setShowModal(false);
@@ -198,12 +202,12 @@ export default function ImportContainers() {
       fetchContainers();
     } catch (error: any) {
       console.error('Error saving container:', error.message);
-      alert('Failed to save container: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to save container: ' + error.message });
     }
   };
 
   const handleAllocate = async (containerId: string) => {
-    if (!confirm('Are you sure you want to allocate import costs to batches? This cannot be undone.')) {
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to allocate import costs to batches? This cannot be undone.', variant: 'warning', confirmLabel: 'Allocate' })) {
       return;
     }
 
@@ -217,14 +221,14 @@ export default function ImportContainers() {
 
       const result = data as any;
       if (result.success) {
-        alert(`Success! Allocated costs to ${result.batches_allocated} batches.\nTotal cost: Rp ${result.total_cost?.toLocaleString()}`);
+        showToast({ type: 'success', title: 'Success', message: `Allocated costs to ${result.batches_allocated} batches. Total cost: Rp ${result.total_cost?.toLocaleString()}` });
         fetchContainers();
       } else {
-        alert('Error: ' + result.error);
+        showToast({ type: 'error', title: 'Error', message: result.error });
       }
     } catch (error: any) {
       console.error('Error allocating costs:', error.message);
-      alert('Failed to allocate costs: ' + error.message);
+      showToast({ type: 'error', title: 'Error', message: 'Failed to allocate costs: ' + error.message });
     }
   };
 
@@ -415,7 +419,7 @@ export default function ImportContainers() {
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">
-                        {new Date(container.import_date).toLocaleDateString()}
+                        {formatDate(container.import_date)}
                       </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-right">
@@ -497,19 +501,12 @@ export default function ImportContainers() {
                   <label className="block text-sm font-medium text-gray-700 mb-1">
                     Supplier <span className="text-red-500">*</span>
                   </label>
-                  <select
+                  <SearchableSelect
                     value={formData.supplier_id}
-                    onChange={(e) => setFormData({ ...formData, supplier_id: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
-                    required
-                  >
-                    <option value="">Select Supplier</option>
-                    {suppliers.map((supplier) => (
-                      <option key={supplier.id} value={supplier.id}>
-                        {supplier.company_name}
-                      </option>
-                    ))}
-                  </select>
+                    onChange={(val) => setFormData({ ...formData, supplier_id: val })}
+                    options={suppliers.map(s => ({ value: s.id, label: s.company_name }))}
+                    placeholder="Select Supplier"
+                  />
                 </div>
               </div>
 

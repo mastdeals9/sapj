@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Layout } from '../components/Layout';
-import { DataTable } from '../components/DataTable';
 import { useLanguage } from '../contexts/LanguageContext';
 import { supabase } from '../lib/supabase';
-import { Package, TrendingUp, AlertTriangle, Calendar } from 'lucide-react';
+import { Package, TrendingUp, AlertTriangle, Calendar, Search, ChevronDown, ChevronUp } from 'lucide-react';
 import { useNavigation } from '../contexts/NavigationContext';
+import { formatDate } from '../utils/dateFormat';
 
 interface StockSummary {
   product_id: string;
@@ -13,7 +13,7 @@ interface StockSummary {
   unit: string;
   category: string;
   total_current_stock: number;
-  reserved_stock: number; // HARDENING FIX #4: Standardized to match DB column name
+  reserved_stock: number;
   available_quantity: number;
   active_batch_count: number;
   expired_batch_count: number;
@@ -24,7 +24,7 @@ interface DetailedBatch {
   id: string;
   batch_number: string;
   current_stock: number;
-  reserved_stock: number; // HARDENING FIX #4: Standardized to match DB column name
+  reserved_stock: number;
   available_quantity: number;
   expiry_date: string | null;
   import_date: string;
@@ -37,6 +37,8 @@ export function Stock() {
   const [loading, setLoading] = useState(true);
   const [selectedProduct, setSelectedProduct] = useState<StockSummary | null>(null);
   const [productBatches, setProductBatches] = useState<DetailedBatch[]>([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [sortConfig, setSortConfig] = useState<{ key: string; direction: 'asc' | 'desc' } | null>(null);
 
   useEffect(() => {
     loadStockSummary();
@@ -44,7 +46,6 @@ export function Stock() {
 
   const loadStockSummary = async () => {
     try {
-      // Get all products (don't filter by stock yet)
       const { data, error } = await supabase
         .from('product_stock_summary')
         .select('*')
@@ -52,20 +53,17 @@ export function Stock() {
 
       if (error) throw error;
 
-      // Get products with active shortages (pending/ordered import requirements)
       const { data: shortageData } = await supabase
         .from('import_requirements')
         .select('product_id, shortage_quantity')
         .in('status', ['pending', 'ordered']);
 
-      // Build map of product_id -> total shortage quantity
       const shortageMap = new Map<string, number>();
       shortageData?.forEach(s => {
         const current = shortageMap.get(s.product_id) || 0;
         shortageMap.set(s.product_id, current + Number(s.shortage_quantity));
       });
 
-      // Get reserved quantities for each product
       const productsWithReserved = await Promise.all(
         (data || []).map(async (product) => {
           const { data: reservedData } = await supabase
@@ -76,20 +74,17 @@ export function Stock() {
 
           const reserved_quantity = reservedData?.reduce((sum, r) => sum + Number(r.reserved_quantity), 0) || 0;
           const shortage_quantity = shortageMap.get(product.product_id) || 0;
-
-          // If there's shortage, show negative reserved (deficit)
           const displayed_reserved = shortage_quantity > 0 ? -shortage_quantity : reserved_quantity;
           const available_quantity = product.total_current_stock - reserved_quantity;
 
           return {
             ...product,
-            reserved_stock: displayed_reserved, // HARDENING FIX #4: Standardized field name
+            reserved_stock: displayed_reserved,
             available_quantity
           };
         })
       );
 
-      // Filter: show products with stock > 0 OR reserved != 0 (including negative) OR has shortage
       const filteredProducts = productsWithReserved.filter(
         p => p.total_current_stock > 0 || p.reserved_stock !== 0 || shortageMap.has(p.product_id)
       );
@@ -114,7 +109,6 @@ export function Stock() {
 
       if (error) throw error;
 
-      // HARDENING FIX #4: No need to map - use DB column name directly
       const batchesWithReserved = (data || []).map(batch => ({
         ...batch,
         available_quantity: batch.current_stock - (batch.reserved_stock || 0)
@@ -127,6 +121,10 @@ export function Stock() {
   };
 
   const handleProductClick = async (product: StockSummary) => {
+    if (selectedProduct?.product_id === product.product_id) {
+      setSelectedProduct(null);
+      return;
+    }
     setSelectedProduct(product);
     await loadProductBatches(product.product_id);
   };
@@ -147,150 +145,35 @@ export function Stock() {
     return new Date(expiryDate) <= thirtyDaysFromNow && !isExpired(expiryDate);
   };
 
-  const getStockStatusColor = (stock: number, batchCount: number) => {
-    if (stock === 0) return 'text-gray-400';
-    if (stock < 500) return 'text-orange-600';
-    return 'text-green-600';
+  const handleSort = (key: string) => {
+    let direction: 'asc' | 'desc' = 'asc';
+    if (sortConfig?.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
   };
 
-  const columns = [
-    {
-      key: 'product_name',
-      label: 'Product',
-      render: (item: StockSummary) => (
-        <div className="py-1">
-          <span className="font-medium text-gray-900">{item.product_name}</span>
-          <span className="text-xs text-gray-500 ml-2 capitalize">({item.category})</span>
-        </div>
-      )
-    },
-    {
-      key: 'stock',
-      label: 'Total Stock',
-      render: (item: StockSummary) => (
-        <span className={`font-semibold ${getStockStatusColor(item.total_current_stock, item.active_batch_count)}`}>
-          {item.total_current_stock.toLocaleString()} {item.unit}
-        </span>
-      )
-    },
-    {
-      key: 'reserved',
-      label: 'Reserved',
-      render: (item: StockSummary) => {
-        if (item.reserved_stock === 0) return <span className="text-gray-400">-</span>;
-        if (item.reserved_stock < 0) {
-          return (
-            <span className="text-red-600 font-semibold">
-              {item.reserved_stock.toLocaleString()} {item.unit}
-            </span>
-          );
-        }
-        return (
-          <span className="text-orange-600 font-medium">
-            {item.reserved_stock.toLocaleString()} {item.unit}
-          </span>
-        );
-      }
-    },
-    {
-      key: 'available',
-      label: 'Available',
-      render: (item: StockSummary) => (
-        <span className="text-green-600 font-semibold">
-          {item.available_quantity.toLocaleString()} {item.unit}
-        </span>
-      )
-    },
-    {
-      key: 'batches',
-      label: 'Batches',
-      render: (item: StockSummary) => (
-        <span className="text-sm">
-          <span className="text-blue-600 font-medium">{item.active_batch_count}</span>
-          {item.expired_batch_count > 0 && (
-            <span className="text-red-600 ml-1">({item.expired_batch_count} expired)</span>
-          )}
-        </span>
-      )
-    },
-    {
-      key: 'expiry',
-      label: 'Nearest Expiry',
-      render: (item: StockSummary) => (
-        item.nearest_expiry_date ? (
-          <span className={`text-sm ${
-            isExpired(item.nearest_expiry_date) ? 'text-red-700 font-semibold' :
-            isNearExpiry(item.nearest_expiry_date) ? 'text-orange-600 font-semibold' :
-            'text-gray-700'
-          }`}>
-            {new Date(item.nearest_expiry_date).toLocaleDateString()}
-            {isNearExpiry(item.nearest_expiry_date) && (
-              <AlertTriangle className="w-3 h-3 inline ml-1" />
-            )}
-          </span>
-        ) : (
-          <span className="text-gray-400 text-sm">-</span>
-        )
-      )
-    },
-  ];
-
-  const batchColumns = [
-    {
-      key: 'batch_number',
-      label: 'Batch',
-      render: (batch: DetailedBatch) => (
-        <span className="font-mono text-sm">{batch.batch_number}</span>
-      )
-    },
-    {
-      key: 'total_stock',
-      label: 'Total',
-      render: (batch: DetailedBatch) => (
-        <span className="font-semibold text-sm">{batch.current_stock.toLocaleString()} {selectedProduct?.unit}</span>
-      )
-    },
-    {
-      key: 'reserved',
-      label: 'Reserved',
-      render: (batch: DetailedBatch) => (
-        <span className="text-orange-600 font-medium text-sm">
-          {batch.reserved_stock > 0 ? `${batch.reserved_stock.toLocaleString()} ${selectedProduct?.unit}` : '-'}
-        </span>
-      )
-    },
-    {
-      key: 'available',
-      label: 'Available',
-      render: (batch: DetailedBatch) => (
-        <span className="text-green-600 font-semibold text-sm">
-          {batch.available_quantity.toLocaleString()} {selectedProduct?.unit}
-        </span>
-      )
-    },
-    {
-      key: 'import_date',
-      label: 'Imported',
-      render: (batch: DetailedBatch) => (
-        <span className="text-sm text-gray-600">
-          {new Date(batch.import_date).toLocaleDateString()}
-        </span>
-      )
-    },
-    {
-      key: 'expiry_date',
-      label: 'Expiry',
-      render: (batch: DetailedBatch) => (
-        <span className={`text-sm ${
-          isExpired(batch.expiry_date) ? 'text-red-700 font-semibold' :
-          isNearExpiry(batch.expiry_date) ? 'text-orange-600 font-semibold' :
-          'text-gray-700'
-        }`}>
-          {batch.expiry_date ? new Date(batch.expiry_date).toLocaleDateString() : '-'}
-        </span>
-      )
-    },
-  ];
+  const filteredData = (() => {
+    let result = [...stockSummary];
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      result = result.filter(item =>
+        item.product_name.toLowerCase().includes(term) ||
+        item.product_code?.toLowerCase().includes(term) ||
+        item.category?.toLowerCase().includes(term)
+      );
+    }
+    if (sortConfig) {
+      result.sort((a, b) => {
+        const aVal = (a as any)[sortConfig.key];
+        const bVal = (b as any)[sortConfig.key];
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+      });
+    }
+    return result;
+  })();
 
   const totalStock = stockSummary.reduce((sum, item) => sum + item.total_current_stock, 0);
   const totalProducts = stockSummary.length;
@@ -299,101 +182,184 @@ export function Stock() {
     item.nearest_expiry_date && isNearExpiry(item.nearest_expiry_date)
   ).length;
 
+  const SortIcon = ({ columnKey }: { columnKey: string }) => {
+    if (sortConfig?.key !== columnKey) return <ChevronDown className="w-3 h-3 opacity-30 inline ml-0.5" />;
+    return sortConfig.direction === 'asc'
+      ? <ChevronUp className="w-3 h-3 inline ml-0.5" />
+      : <ChevronDown className="w-3 h-3 inline ml-0.5" />;
+  };
+
   return (
     <Layout>
-      <div className="space-y-6">
+      <div className="space-y-3">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Stock Inventory</h1>
-            <p className="text-gray-600 mt-1">Current stock levels across all products</p>
-          </div>
+          <h1 className="text-xl font-bold text-gray-900">{t('stock.title')}</h1>
           <button
             onClick={goToBatches}
-            className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition"
+            className="flex items-center gap-1.5 bg-blue-600 text-white px-3 py-1.5 rounded-lg hover:bg-blue-700 transition text-sm"
           >
-            <Package className="w-5 h-5" />
+            <Package className="w-4 h-4" />
             View Batches
           </button>
         </div>
 
+        <div className="grid grid-cols-4 gap-3">
+          <div className="bg-blue-600 rounded-lg p-3 text-white">
+            <p className="text-blue-100 text-xs">Products In Stock</p>
+            <p className="text-xl font-bold">{totalProducts}</p>
+          </div>
+          <div className="bg-green-600 rounded-lg p-3 text-white">
+            <p className="text-green-100 text-xs">Total Stock</p>
+            <p className="text-xl font-bold">{totalStock.toLocaleString()}</p>
+          </div>
+          <div className="bg-orange-500 rounded-lg p-3 text-white">
+            <p className="text-orange-100 text-xs">Low Stock</p>
+            <p className="text-xl font-bold">{lowStockProducts}</p>
+          </div>
+          <div className="bg-red-500 rounded-lg p-3 text-white">
+            <p className="text-red-100 text-xs">Near Expiry</p>
+            <p className="text-xl font-bold">{productsWithNearExpiry}</p>
+          </div>
+        </div>
+
         {selectedProduct && (
-          <div className="bg-blue-50 rounded-lg shadow-md p-4 border-l-4 border-blue-500">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-lg font-semibold text-gray-900">
-                {selectedProduct.product_name} - Batch Details
+          <div className="bg-blue-50 rounded-lg border border-blue-200 p-3">
+            <div className="flex items-center justify-between mb-2">
+              <h2 className="text-sm font-semibold text-gray-800">
+                {selectedProduct.product_name} - Batches
               </h2>
               <button
                 onClick={() => setSelectedProduct(null)}
-                className="text-gray-500 hover:text-gray-700 text-xl font-bold"
+                className="text-gray-400 hover:text-gray-600 text-sm font-bold px-1"
               >
-                ✕
+                x
               </button>
             </div>
-            <DataTable
-              columns={batchColumns}
-              data={productBatches}
-              loading={false}
-            />
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-blue-200">
+                  <th className="text-left py-1 px-2 font-medium text-gray-500">BATCH</th>
+                  <th className="text-right py-1 px-2 font-medium text-gray-500">STOCK</th>
+                  <th className="text-right py-1 px-2 font-medium text-gray-500">RESERVED</th>
+                  <th className="text-right py-1 px-2 font-medium text-gray-500">AVAILABLE</th>
+                  <th className="text-right py-1 px-2 font-medium text-gray-500">IMPORTED</th>
+                  <th className="text-right py-1 px-2 font-medium text-gray-500">EXPIRY</th>
+                </tr>
+              </thead>
+              <tbody>
+                {productBatches.map(batch => (
+                  <tr key={batch.id} className="border-b border-blue-100">
+                    <td className="py-1 px-2 font-mono">{batch.batch_number}</td>
+                    <td className="py-1 px-2 text-right font-semibold">{batch.current_stock.toLocaleString()} {selectedProduct.unit}</td>
+                    <td className="py-1 px-2 text-right text-orange-600">{batch.reserved_stock > 0 ? `${batch.reserved_stock.toLocaleString()} ${selectedProduct.unit}` : '-'}</td>
+                    <td className="py-1 px-2 text-right text-green-600 font-semibold">{batch.available_quantity.toLocaleString()} {selectedProduct.unit}</td>
+                    <td className="py-1 px-2 text-right text-gray-600">{formatDate(batch.import_date)}</td>
+                    <td className={`py-1 px-2 text-right ${isExpired(batch.expiry_date) ? 'text-red-700 font-semibold' : isNearExpiry(batch.expiry_date) ? 'text-orange-600' : 'text-gray-600'}`}>
+                      {batch.expiry_date ? formatDate(batch.expiry_date) : '-'}
+                    </td>
+                  </tr>
+                ))}
+                {productBatches.length === 0 && (
+                  <tr><td colSpan={6} className="py-2 px-2 text-center text-gray-400">No active batches</td></tr>
+                )}
+              </tbody>
+            </table>
           </div>
         )}
 
-        <div className="bg-white rounded-lg shadow-md overflow-hidden">
-          <DataTable
-            columns={columns}
-            data={stockSummary}
-            loading={loading}
-            onRowClick={handleProductClick}
-          />
+        <div className="bg-white rounded-lg shadow-sm border">
+          <div className="p-2 border-b">
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search..."
+                className="w-full pl-8 pr-3 py-1.5 text-sm border border-gray-300 rounded-md focus:ring-1 focus:ring-blue-500 focus:border-blue-500 outline-none"
+              />
+            </div>
+          </div>
 
-          {!loading && stockSummary.length === 0 && (
-            <div className="text-center py-12">
-              <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500 text-lg">No stock available</p>
-              <p className="text-gray-400 text-sm mt-2">All products are currently out of stock</p>
+          {loading ? (
+            <div className="p-6 text-center">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto" />
+              <p className="mt-2 text-gray-500 text-sm">Loading...</p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50 border-b">
+                  <tr>
+                    <th className="text-left px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase cursor-pointer" onClick={() => handleSort('product_name')}>
+                      Product <SortIcon columnKey="product_name" />
+                    </th>
+                    <th className="text-right px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase cursor-pointer" onClick={() => handleSort('total_current_stock')}>
+                      Stock <SortIcon columnKey="total_current_stock" />
+                    </th>
+                    <th className="text-right px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase">Reserved</th>
+                    <th className="text-right px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase">Available</th>
+                    <th className="text-center px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase">Batches</th>
+                    <th className="text-right px-3 py-1.5 text-[11px] font-medium text-gray-500 uppercase">Nearest Expiry</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {filteredData.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="px-3 py-6 text-center text-gray-400 text-sm">
+                        <Package className="w-10 h-10 mx-auto mb-2 text-gray-300" />
+                        No stock available
+                      </td>
+                    </tr>
+                  ) : (
+                    filteredData.map((item) => (
+                      <tr
+                        key={item.product_id}
+                        onClick={() => handleProductClick(item)}
+                        className={`cursor-pointer hover:bg-gray-50 transition-colors ${selectedProduct?.product_id === item.product_id ? 'bg-blue-50' : ''}`}
+                      >
+                        <td className="px-3 py-1.5 text-sm">
+                          <span className="font-medium text-gray-900">{item.product_name}</span>
+                          <span className="text-[10px] text-gray-400 ml-1.5 capitalize">({item.category})</span>
+                        </td>
+                        <td className={`px-3 py-1.5 text-sm text-right font-semibold ${item.total_current_stock === 0 ? 'text-gray-400' : item.total_current_stock < 500 ? 'text-orange-600' : 'text-green-600'}`}>
+                          {item.total_current_stock.toLocaleString()} {item.unit}
+                        </td>
+                        <td className="px-3 py-1.5 text-sm text-right">
+                          {item.reserved_stock === 0 ? (
+                            <span className="text-gray-300">-</span>
+                          ) : item.reserved_stock < 0 ? (
+                            <span className="text-red-600 font-semibold">{item.reserved_stock.toLocaleString()} {item.unit}</span>
+                          ) : (
+                            <span className="text-orange-600">{item.reserved_stock.toLocaleString()} {item.unit}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1.5 text-sm text-right font-semibold text-green-600">
+                          {item.available_quantity.toLocaleString()} {item.unit}
+                        </td>
+                        <td className="px-3 py-1.5 text-sm text-center">
+                          <span className="text-blue-600 font-medium">{item.active_batch_count}</span>
+                          {item.expired_batch_count > 0 && (
+                            <span className="text-red-500 ml-0.5 text-xs">({item.expired_batch_count} exp)</span>
+                          )}
+                        </td>
+                        <td className={`px-3 py-1.5 text-sm text-right ${
+                          item.nearest_expiry_date && isExpired(item.nearest_expiry_date) ? 'text-red-700 font-semibold' :
+                          item.nearest_expiry_date && isNearExpiry(item.nearest_expiry_date) ? 'text-orange-600 font-semibold' :
+                          'text-gray-600'
+                        }`}>
+                          {item.nearest_expiry_date ? formatDate(item.nearest_expiry_date) : '-'}
+                          {item.nearest_expiry_date && isNearExpiry(item.nearest_expiry_date) && (
+                            <AlertTriangle className="w-3 h-3 inline ml-0.5" />
+                          )}
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
           )}
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-lg shadow-lg p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-blue-100 text-sm font-medium">Products In Stock</p>
-                <p className="text-3xl font-bold mt-1">{totalProducts}</p>
-              </div>
-              <Package className="w-10 h-10 text-blue-200" />
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-lg shadow-lg p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-green-100 text-sm font-medium">Total Stock Units</p>
-                <p className="text-3xl font-bold mt-1">{totalStock.toLocaleString()}</p>
-              </div>
-              <TrendingUp className="w-10 h-10 text-green-200" />
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-orange-500 to-orange-600 rounded-lg shadow-lg p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-orange-100 text-sm font-medium">Low Stock Items</p>
-                <p className="text-3xl font-bold mt-1">{lowStockProducts}</p>
-              </div>
-              <AlertTriangle className="w-10 h-10 text-orange-200" />
-            </div>
-          </div>
-
-          <div className="bg-gradient-to-br from-red-500 to-red-600 rounded-lg shadow-lg p-6 text-white">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-red-100 text-sm font-medium">Near Expiry</p>
-                <p className="text-3xl font-bold mt-1">{productsWithNearExpiry}</p>
-              </div>
-              <Calendar className="w-10 h-10 text-red-200" />
-            </div>
-          </div>
         </div>
       </div>
     </Layout>

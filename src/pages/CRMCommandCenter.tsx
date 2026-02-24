@@ -115,7 +115,7 @@ export function CRMCommandCenter() {
         customerId = existingCustomers.id;
 
         // Update customer info if we have new data
-        const updates: any = {};
+        const updates: Record<string, string> = {};
         if (formData.contactPerson && !existingCustomers.contact_person) {
           updates.contact_person = formData.contactPerson;
         }
@@ -209,7 +209,7 @@ export function CRMCommandCenter() {
 
       // If multi-product, create N separate inquiries in crm_inquiries with .1, .2, .3 suffixes
       // All common fields are copied to each inquiry
-      let inquiry: any;
+      let inquiry: Inquiry;
 
       if (formData.isMultiProduct && formData.products && formData.products.length > 0) {
         const inquiriesToInsert = formData.products.map((product) => ({
@@ -351,13 +351,14 @@ export function CRMCommandCenter() {
         : `Inquiry #${inquiry.inquiry_number} created successfully!\n\nUse Quick Actions to send documents.`;
 
       alert(successMsg);
-    } catch (error: any) {
+    } catch (error: unknown) {
       console.error('[CRMCommandCenter] Error creating inquiry:', error);
       console.error('[CRMCommandCenter] Error details:', JSON.stringify(error, null, 2));
-      if (error.message?.includes('duplicate key')) {
+      const err = error as { message?: string; details?: string; hint?: string };
+      if (err.message?.includes('duplicate key')) {
         alert('This inquiry number already exists. Please use a different number.');
       } else {
-        const errorMsg = error.message || error.details || error.hint || 'Unknown error';
+        const errorMsg = err.message || err.details || err.hint || 'Unknown error';
         alert(`Failed to create inquiry: ${errorMsg}\n\nCheck console for details.`);
       }
     } finally {

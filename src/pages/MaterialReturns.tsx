@@ -3,9 +3,13 @@ import { supabase } from '../lib/supabase';
 import { useAuth } from '../contexts/AuthContext';
 import { useLanguage } from '../contexts/LanguageContext';
 import { Plus, Eye, Trash2, PackageX, AlertTriangle, Edit, CheckCircle, XCircle } from 'lucide-react';
+import { showToast } from '../components/ToastNotification';
+import { showConfirm } from '../components/ConfirmDialog';
 import { Modal } from '../components/Modal';
+import { SearchableSelect } from '../components/SearchableSelect';
 import { DataTable } from '../components/DataTable';
 import { MaterialReturnView } from '../components/MaterialReturnView';
+import { formatDate } from '../utils/dateFormat';
 
 interface MaterialReturn {
   id: string;
@@ -237,13 +241,13 @@ export default function MaterialReturns() {
     e.preventDefault();
 
     if (!formData.customer_id || !formData.original_dc_id || !formData.return_reason) {
-      alert('Please complete all required fields');
+      showToast({ type: 'error', title: 'Error', message: 'Please complete all required fields' });
       return;
     }
 
     const validItems = returnItems.filter(item => item.quantity_returned > 0);
     if (validItems.length === 0) {
-      alert('Please enter at least one item with return quantity');
+      showToast({ type: 'error', title: 'Error', message: 'Please enter at least one item with return quantity' });
       return;
     }
 
@@ -251,7 +255,7 @@ export default function MaterialReturns() {
       item => item.quantity_returned > item.original_quantity
     );
     if (hasInvalidQuantities) {
-      alert('Return quantity cannot exceed original quantity');
+      showToast({ type: 'error', title: 'Error', message: 'Return quantity cannot exceed original quantity' });
       return;
     }
 
@@ -302,7 +306,7 @@ export default function MaterialReturns() {
 
         if (itemsError) throw itemsError;
 
-        alert('Material return updated successfully.');
+        showToast({ type: 'success', title: 'Success', message: 'Material return updated successfully.' });
       } else {
         const { data: returnData, error: returnError} = await supabase
           .from('material_returns')
@@ -340,7 +344,7 @@ export default function MaterialReturns() {
 
         if (itemsError) throw itemsError;
 
-        alert('Material return created successfully. Pending approval.');
+        showToast({ type: 'success', title: 'Success', message: 'Material return created successfully. Pending approval.' });
       }
 
       setModalOpen(false);
@@ -348,7 +352,7 @@ export default function MaterialReturns() {
       loadReturns();
     } catch (error: any) {
       console.error('Error saving return:', error);
-      alert(error.message || 'Failed to save material return');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to save material return' });
     }
   };
 
@@ -370,7 +374,7 @@ export default function MaterialReturns() {
       setViewModalOpen(true);
     } catch (error) {
       console.error('Error loading return items:', error);
-      alert('Failed to load return details');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load return details' });
     }
   };
 
@@ -416,12 +420,12 @@ export default function MaterialReturns() {
       setModalOpen(true);
     } catch (error) {
       console.error('Error loading return for edit:', error);
-      alert('Failed to load return for editing');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to load return for editing' });
     }
   };
 
   const handleApprove = async (id: string) => {
-    if (!confirm('Approve this material return? Stock will be added back to inventory based on disposition.')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Approve this material return? Stock will be added back to inventory based on disposition.', variant: 'warning' })) return;
 
     try {
       const { error } = await supabase
@@ -434,11 +438,11 @@ export default function MaterialReturns() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Material return approved successfully');
+      showToast({ type: 'success', title: 'Success', message: 'Material return approved successfully' });
       loadReturns();
     } catch (error: any) {
       console.error('Error approving return:', error);
-      alert(error.message || 'Failed to approve material return');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to approve material return' });
     }
   };
 
@@ -457,16 +461,16 @@ export default function MaterialReturns() {
         .eq('id', id);
 
       if (error) throw error;
-      alert('Material return rejected');
+      showToast({ type: 'success', title: 'Success', message: 'Material return rejected' });
       loadReturns();
     } catch (error: any) {
       console.error('Error rejecting return:', error);
-      alert(error.message || 'Failed to reject material return');
+      showToast({ type: 'error', title: 'Error', message: error.message || 'Failed to reject material return' });
     }
   };
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Are you sure you want to delete this material return?')) return;
+    if (!await showConfirm({ title: 'Confirm', message: 'Are you sure you want to delete this material return?', variant: 'danger', confirmLabel: 'Delete' })) return;
 
     try {
       const { error } = await supabase
@@ -478,7 +482,7 @@ export default function MaterialReturns() {
       loadReturns();
     } catch (error) {
       console.error('Error deleting return:', error);
-      alert('Failed to delete material return');
+      showToast({ type: 'error', title: 'Error', message: 'Failed to delete material return' });
     }
   };
 
@@ -505,32 +509,32 @@ export default function MaterialReturns() {
     {
       key: 'return_number',
       label: 'Return #',
-      render: (ret: MaterialReturn) => ret.return_number || 'Pending'
+      render: (value: any, ret: MaterialReturn) => ret.return_number || 'Pending'
     },
     {
       key: 'return_date',
       label: 'Date',
-      render: (ret: MaterialReturn) => new Date(ret.return_date).toLocaleDateString()
+      render: (value: any, ret: MaterialReturn) => formatDate(ret.return_date)
     },
     {
       key: 'customer',
       label: 'Customer',
-      render: (ret: MaterialReturn) => ret.customers?.company_name || 'N/A'
+      render: (value: any, ret: MaterialReturn) => ret.customers?.company_name || 'N/A'
     },
     {
       key: 'dc_number',
       label: 'Original DC',
-      render: (ret: MaterialReturn) => ret.delivery_challans?.challan_number || 'N/A'
+      render: (value: any, ret: MaterialReturn) => ret.delivery_challans?.challan_number || 'N/A'
     },
     {
       key: 'return_type',
       label: 'Type',
-      render: (ret: MaterialReturn) => ret.return_type.replace('_', ' ')
+      render: (value: any, ret: MaterialReturn) => ret.return_type.replace('_', ' ')
     },
     {
       key: 'status',
       label: 'Status',
-      render: (ret: MaterialReturn) => (
+      render: (value: any, ret: MaterialReturn) => (
         <span className={`inline-block px-2 py-1 rounded-full text-xs font-medium ${
           ret.status === 'approved' ? 'bg-green-100 text-green-800' :
           ret.status === 'rejected' ? 'bg-red-100 text-red-800' :
@@ -659,19 +663,12 @@ export default function MaterialReturns() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Customer *
                 </label>
-                <select
+                <SearchableSelect
                   value={formData.customer_id}
-                  onChange={(e) => handleCustomerChange(e.target.value)}
-                  required
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-transparent"
-                >
-                  <option value="">Select Customer</option>
-                  {customers.map((customer) => (
-                    <option key={customer.id} value={customer.id}>
-                      {customer.company_name}
-                    </option>
-                  ))}
-                </select>
+                  onChange={(val) => handleCustomerChange(val)}
+                  options={customers.map(c => ({ value: c.id, label: c.company_name }))}
+                  placeholder="Select Customer"
+                />
               </div>
 
               <div>
@@ -688,7 +685,7 @@ export default function MaterialReturns() {
                   <option value="">Select Delivery Challan</option>
                   {deliveryChallans.map((dc) => (
                     <option key={dc.id} value={dc.id}>
-                      {dc.challan_number} - {new Date(dc.challan_date).toLocaleDateString()}
+                      {dc.challan_number} - {formatDate(dc.challan_date)}
                     </option>
                   ))}
                 </select>
