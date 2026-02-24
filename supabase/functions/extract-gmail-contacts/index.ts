@@ -242,7 +242,7 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const safeMax = Math.min(max_emails, 5000);
+    const safeMax = Math.min(max_emails, 100);
     console.log(`Fetching up to ${safeMax} new emails...`);
 
     const messages = await fetchAllGmailMessages(access_token, safeMax, supabase, connection_id, user_id);
