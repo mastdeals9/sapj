@@ -67,6 +67,75 @@ function isValidPersonName(name: string): boolean {
   return true;
 }
 
+async function refreshAccessToken(
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string
+): Promise<string | null> {
+  try {
+    const response = await fetch('https://oauth2.googleapis.com/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken,
+        grant_type: 'refresh_token',
+      }).toString(),
+    });
+
+    if (!response.ok) {
+      console.error('Token refresh failed:', response.status, await response.text());
+      return null;
+    }
+
+    const data = await response.json();
+    return data.access_token || null;
+  } catch (error) {
+    console.error('Token refresh error:', error);
+    return null;
+  }
+}
+
+async function gmailFetchWithRefresh(
+  url: string,
+  accessToken: string,
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string,
+  supabaseClient: any,
+  connectionId: string
+): Promise<{ response: Response; newAccessToken: string }> {
+  let response = await fetch(url, {
+    headers: { 'Authorization': `Bearer ${accessToken}` },
+  });
+
+  if (response.status === 401) {
+    console.log('Access token expired, refreshing...');
+    const newToken = await refreshAccessToken(refreshToken, clientId, clientSecret);
+    if (!newToken) {
+      throw new Error('Gmail token expired and refresh failed. Please reconnect Gmail in Settings.');
+    }
+
+    await supabaseClient
+      .from('gmail_connections')
+      .update({
+        access_token: newToken,
+        access_token_expires_at: new Date(Date.now() + 3600 * 1000).toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', connectionId);
+
+    response = await fetch(url, {
+      headers: { 'Authorization': `Bearer ${newToken}` },
+    });
+
+    return { response, newAccessToken: newToken };
+  }
+
+  return { response, newAccessToken: accessToken };
+}
+
 async function extractContactsBatchWithAI(
   emails: EmailData[],
   openaiApiKey: string
@@ -204,11 +273,14 @@ function getSubject(headers: any[]): string {
 
 async function fetchAllGmailMessages(
   accessToken: string,
+  refreshToken: string,
+  clientId: string,
+  clientSecret: string,
   maxResults: number,
   supabaseClient: any,
   connectionId: string,
   userId: string
-): Promise<any[]> {
+): Promise<{ messages: any[]; currentToken: string }> {
   const { data: processedMessages } = await supabaseClient
     .from('gmail_processed_messages')
     .select('gmail_message_id')
@@ -222,12 +294,15 @@ async function fetchAllGmailMessages(
   let pageToken = '';
   let pagesFetched = 0;
   const MAX_PAGES = 50;
+  let currentToken = accessToken;
 
   while (messages.length < maxResults && pagesFetched < MAX_PAGES) {
     const listUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages?maxResults=100${pageToken ? `&pageToken=${pageToken}` : ''}`;
-    const listResponse = await fetch(listUrl, {
-      headers: { 'Authorization': `Bearer ${accessToken}` },
-    });
+
+    const { response: listResponse, newAccessToken } = await gmailFetchWithRefresh(
+      listUrl, currentToken, refreshToken, clientId, clientSecret, supabaseClient, connectionId
+    );
+    currentToken = newAccessToken;
 
     if (!listResponse.ok) throw new Error(`Gmail list error: ${listResponse.status}`);
     const listData = await listResponse.json();
@@ -238,9 +313,9 @@ async function fetchAllGmailMessages(
     const newIds = listData.messages.filter((m: any) => !processedIds.has(m.id));
 
     const batchFetch = newIds.slice(0, maxResults - messages.length).map(async (msg: any) => {
-      const detailResponse = await fetch(
-        `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`,
-        { headers: { 'Authorization': `Bearer ${accessToken}` } }
+      const detailUrl = `https://gmail.googleapis.com/gmail/v1/users/me/messages/${msg.id}?format=full`;
+      const { response: detailResponse } = await gmailFetchWithRefresh(
+        detailUrl, currentToken, refreshToken, clientId, clientSecret, supabaseClient, connectionId
       );
       if (detailResponse.ok) return detailResponse.json();
       return null;
@@ -256,7 +331,7 @@ async function fetchAllGmailMessages(
   }
 
   console.log(`Fetched ${messages.length} new messages`);
-  return messages;
+  return { messages, currentToken };
 }
 
 async function markMessagesProcessed(
@@ -289,7 +364,7 @@ Deno.serve(async (req: Request) => {
   }
 
   try {
-    const { access_token, max_emails = 2000, user_id, connection_id } = await req.json();
+    const { access_token, refresh_token, client_id, client_secret, max_emails = 2000, user_id, connection_id } = await req.json();
 
     if (!access_token || !user_id || !connection_id) {
       return new Response(
@@ -297,6 +372,9 @@ Deno.serve(async (req: Request) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
+
+    const googleClientId = client_id || Deno.env.get('GOOGLE_CLIENT_ID') || '';
+    const googleClientSecret = client_secret || Deno.env.get('GOOGLE_CLIENT_SECRET') || '';
 
     const openaiApiKey = Deno.env.get('OPENAI_API_KEY');
     if (!openaiApiKey) {
@@ -310,10 +388,13 @@ Deno.serve(async (req: Request) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    const safeMax = Math.min(max_emails, 100);
+    const safeMax = Math.min(max_emails, 500);
     console.log(`Fetching up to ${safeMax} new emails...`);
 
-    const messages = await fetchAllGmailMessages(access_token, safeMax, supabase, connection_id, user_id);
+    const { messages, currentToken } = await fetchAllGmailMessages(
+      access_token, refresh_token || '', googleClientId, googleClientSecret,
+      safeMax, supabase, connection_id, user_id
+    );
 
     if (messages.length === 0) {
       return new Response(

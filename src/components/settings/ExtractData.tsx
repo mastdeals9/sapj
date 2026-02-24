@@ -118,6 +118,8 @@ export function ExtractData() {
         body: JSON.stringify({
           access_token: connection.access_token,
           refresh_token: connection.refresh_token,
+          client_id: import.meta.env.VITE_GOOGLE_CLIENT_ID,
+          client_secret: import.meta.env.VITE_GOOGLE_CLIENT_SECRET,
           max_emails: extractAll ? 5000 : maxEmails,
           user_id: user.id,
           connection_id: connection.id,
