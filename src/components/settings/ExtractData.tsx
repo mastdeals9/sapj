@@ -146,7 +146,10 @@ export function ExtractData() {
 
           const { data: inserted, error: insertError } = await supabase
             .from('extracted_contacts')
-            .insert(contactsToInsert)
+            .upsert(contactsToInsert, {
+              onConflict: 'user_id,email_ids',
+              ignoreDuplicates: false,
+            })
             .select();
 
           if (insertError) {
