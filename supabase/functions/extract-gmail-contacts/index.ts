@@ -246,7 +246,7 @@ async function markMessagesProcessed(
         contacts_extracted: contactsExtracted,
         extraction_data: extractionData,
       })),
-      { onConflict: 'connection_id,gmail_message_id', ignoreDuplicates: true }
+      { onConflict: 'connection_id,gmail_message_id', ignoreDuplicates: false }
     );
   }
 }
