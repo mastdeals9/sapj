@@ -136,7 +136,15 @@ export function ExtractData() {
         let newlyInsertedIds: string[] = [];
 
         if (result.contacts && result.contacts.length > 0) {
-          const contactsToInsert = result.contacts.map((contact: any) => ({
+          const seenEmailIds = new Map<string, any>();
+          for (const contact of result.contacts) {
+            const key = (contact.emailIds || '').toLowerCase();
+            if (!seenEmailIds.has(key) || (contact.confidence || 0) > (seenEmailIds.get(key).confidence || 0)) {
+              seenEmailIds.set(key, contact);
+            }
+          }
+
+          const contactsToInsert = Array.from(seenEmailIds.values()).map((contact: any) => ({
             user_id: user.id,
             company_name: contact.companyName || '',
             customer_name: contact.customerName || '',
