@@ -315,8 +315,8 @@ Deno.serve(async (req: Request) => {
           }
 
           await supabase.from('gmail_processed_messages').insert({
-            user_id: userId,
-            connection_id: connectionId,
+            user_id: user_id,
+            connection_id: connection_id,
             gmail_message_id: emailData.messageId,
             contacts_extracted: 1,
             extraction_data: result
