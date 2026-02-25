@@ -343,9 +343,15 @@ export function Batches() {
       setModalOpen(false);
       resetForm();
       loadBatches();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error saving batch:', error);
-      showToast({ type: 'error', title: 'Error', message: 'Failed to save batch. Please try again.' });
+      let msg = 'Failed to save batch. Please try again.';
+      if (error?.message?.includes('duplicate') || error?.code === '23505') {
+        msg = 'A batch with this batch number already exists. Please use a different batch number.';
+      } else if (error?.message) {
+        msg = error.message;
+      }
+      showToast({ type: 'error', title: 'Error', message: msg });
     }
   };
 
