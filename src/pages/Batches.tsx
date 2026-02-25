@@ -6,7 +6,10 @@ import { SearchableSelect } from '../components/SearchableSelect';
 import { useLanguage } from '../contexts/LanguageContext';
 import { useAuth } from '../contexts/AuthContext';
 import { supabase } from '../lib/supabase';
-import { Plus, Edit, Trash2, AlertTriangle, Package, DollarSign, FileText, ExternalLink, Search, ChevronDown, ChevronRight, Archive, Eye, EyeOff } from 'lucide-react';
+import { Plus, Edit, Trash2, AlertTriangle, Package, DollarSign, FileText, ExternalLink, Search, ChevronDown, ChevronRight, Archive, Eye, EyeOff, ExternalLink as LinkIcon } from 'lucide-react';
+import { ProformaInvoiceView } from '../components/ProformaInvoiceView';
+import { DeliveryChallanView } from '../components/DeliveryChallanView';
+import { InvoiceView } from '../components/InvoiceView';
 import { showToast } from '../components/ToastNotification';
 import { showConfirm } from '../components/ConfirmDialog';
 import { formatDate } from '../utils/dateFormat';
@@ -88,6 +91,10 @@ export function Batches() {
   const [batchSearch, setBatchSearch] = useState('');
   const [showArchived, setShowArchived] = useState(false);
   const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
+  const [quickViewSO, setQuickViewSO] = useState<{ order: any; items: any[] } | null>(null);
+  const [quickViewDC, setQuickViewDC] = useState<{ challan: any; items: any[] } | null>(null);
+  const [quickViewInvoice, setQuickViewInvoice] = useState<{ invoice: any; items: any[] } | null>(null);
+  const [companySettings, setCompanySettings] = useState<any>(null);
   const [formData, setFormData] = useState({
     batch_number: '',
     product_id: '',
@@ -113,7 +120,55 @@ export function Batches() {
     loadBatches();
     loadProducts();
     loadImportContainers();
+    loadCompanySettings();
   }, []);
+
+  const loadCompanySettings = async () => {
+    const { data } = await supabase.from('settings').select('*').maybeSingle();
+    if (data) setCompanySettings(data);
+  };
+
+  const openQuickViewSO = async (soNumber: string) => {
+    const { data: order } = await supabase
+      .from('sales_orders')
+      .select(`*, customers(company_name, address, city, phone, npwp, pharmacy_license, gst_vat_type)`)
+      .eq('so_number', soNumber)
+      .maybeSingle();
+    if (!order) return;
+    const { data: items } = await supabase
+      .from('sales_order_items')
+      .select(`*, products(product_name, product_code, unit)`)
+      .eq('sales_order_id', order.id);
+    setQuickViewSO({ order, items: items || [] });
+  };
+
+  const openQuickViewDC = async (challanNumber: string) => {
+    const { data: challan } = await supabase
+      .from('delivery_challans')
+      .select(`*, customers(company_name, address, city, phone, npwp, pharmacy_license, gst_vat_type)`)
+      .eq('challan_number', challanNumber)
+      .maybeSingle();
+    if (!challan) return;
+    const { data: items } = await supabase
+      .from('delivery_challan_items')
+      .select(`*, products(product_name, product_code, unit), batches(batch_number)`)
+      .eq('challan_id', challan.id);
+    setQuickViewDC({ challan, items: items || [] });
+  };
+
+  const openQuickViewInvoice = async (invoiceNumber: string) => {
+    const { data: invoice } = await supabase
+      .from('sales_invoices')
+      .select(`*, customers(company_name, address, city, phone, npwp, pharmacy_license, gst_vat_type)`)
+      .eq('invoice_number', invoiceNumber)
+      .maybeSingle();
+    if (!invoice) return;
+    const { data: items } = await supabase
+      .from('sales_invoice_items')
+      .select(`*, products(product_name, product_code, unit), batches(batch_number)`)
+      .eq('invoice_id', invoice.id);
+    setQuickViewInvoice({ invoice, items: items || [] });
+  };
 
   const loadBatches = async () => {
     try {
@@ -1710,16 +1765,29 @@ export function Batches() {
                             {txn.transaction_date && (
                               <div><strong>Date:</strong> {formatDate(txn.transaction_date)}</div>
                             )}
-                            {isReservation && txn.so_number && (
-                              <div className="text-xs text-blue-600 font-medium">
-                                SO: {txn.so_number} {txn.customer_name ? `- ${txn.customer_name}` : ''}
+                            {isReservation && txn.customer_name && (
+                              <div className="text-xs font-medium text-gray-700">
+                                Customer: {txn.customer_name}
                               </div>
                             )}
                             {isReservation && isReleasedRes && txn.release_reason && (
                               <div className="text-xs text-gray-500">Reason: {txn.release_reason}</div>
                             )}
                             {!isReservation && txn.reference_number && (
-                              <div><strong>Ref:</strong> {txn.reference_number}</div>
+                              <div className="flex items-center gap-1">
+                                <strong>Ref:</strong>
+                                {txn.transaction_type === 'sale' && txn.reference_number ? (
+                                  <button
+                                    onClick={() => openQuickViewInvoice(txn.reference_number)}
+                                    className="text-blue-600 hover:text-blue-800 hover:underline font-medium inline-flex items-center gap-0.5"
+                                  >
+                                    {txn.reference_number}
+                                    <ExternalLink className="w-3 h-3" />
+                                  </button>
+                                ) : (
+                                  <span>{txn.reference_number}</span>
+                                )}
+                              </div>
                             )}
                             {!isReservation && txn.customer?.company_name && (
                               <div className="text-xs font-medium text-gray-700">
@@ -1727,14 +1795,31 @@ export function Batches() {
                               </div>
                             )}
                             {!isReservation && txn.sales_orders && (
-                              <div className="text-xs text-blue-600">
+                              <button
+                                onClick={() => openQuickViewSO(txn.sales_orders.so_number)}
+                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                              >
                                 SO: {txn.sales_orders.so_number}
-                              </div>
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
                             )}
                             {!isReservation && txn.delivery_challans && (
-                              <div className="text-xs text-blue-600">
+                              <button
+                                onClick={() => openQuickViewDC(txn.delivery_challans.challan_number)}
+                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                              >
                                 DO: {txn.delivery_challans.challan_number}
-                              </div>
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
+                            )}
+                            {isReservation && txn.so_number && (
+                              <button
+                                onClick={() => openQuickViewSO(txn.so_number)}
+                                className="text-xs text-blue-600 hover:text-blue-800 hover:underline inline-flex items-center gap-0.5"
+                              >
+                                SO: {txn.so_number}
+                                <ExternalLink className="w-3 h-3" />
+                              </button>
                             )}
                             {txn.notes && !txn.notes.includes('[backfilled]') && (
                               <div className="text-xs text-gray-500 italic">{txn.notes}</div>
@@ -1758,6 +1843,31 @@ export function Batches() {
           </div>
         </Modal>
       </div>
+
+      {quickViewSO && (
+        <ProformaInvoiceView
+          salesOrder={quickViewSO.order}
+          items={quickViewSO.items}
+          onClose={() => setQuickViewSO(null)}
+        />
+      )}
+
+      {quickViewDC && (
+        <DeliveryChallanView
+          challan={quickViewDC.challan}
+          items={quickViewDC.items}
+          onClose={() => setQuickViewDC(null)}
+          companySettings={companySettings}
+        />
+      )}
+
+      {quickViewInvoice && (
+        <InvoiceView
+          invoice={quickViewInvoice.invoice}
+          items={quickViewInvoice.items}
+          onClose={() => setQuickViewInvoice(null)}
+        />
+      )}
     </Layout>
   );
 }
