@@ -562,29 +562,64 @@ export function Batches() {
     const enrichedTxns = await Promise.all((txnResult.data || []).map(async (txn) => {
       let dcData = null;
       let soData = null;
+      let customerData = null;
+      let invoiceData = null;
 
+      // For DC-type transactions
       if (txn.reference_number && txn.reference_number.startsWith('DO-')) {
         const { data: dc } = await supabase
           .from('delivery_challans')
-          .select('challan_number, customer_id, customers(company_name)')
+          .select('challan_number, sales_order_id, customer_id, customers(company_name), sales_orders(so_number)')
           .eq('challan_number', txn.reference_number)
           .maybeSingle();
         dcData = dc;
+        if (dc?.customers) customerData = dc.customers;
+        if (dc?.sales_orders) soData = dc.sales_orders;
       }
 
-      if (txn.sales_order_id) {
+      // For sale transactions via invoice — look up via reference_id (sales_invoice_item id)
+      if (txn.transaction_type === 'sale' && txn.reference_type === 'sales_invoice_item' && txn.reference_id) {
+        const { data: sii } = await supabase
+          .from('sales_invoice_items')
+          .select(`
+            delivery_challan_item_id,
+            invoice_id,
+            sales_invoices(invoice_number, sales_order_id, customer_id, customers(company_name), sales_orders(so_number)),
+            delivery_challan_items(challan_id, delivery_challans(challan_number, sales_order_id, sales_orders(so_number)))
+          `)
+          .eq('id', txn.reference_id)
+          .maybeSingle();
+
+        if (sii) {
+          const si = sii.sales_invoices as any;
+          if (si?.customers) customerData = si.customers;
+          if (si?.sales_orders) soData = si.sales_orders;
+          invoiceData = { invoice_number: si?.invoice_number };
+          const dci = sii.delivery_challan_items as any;
+          if (dci?.delivery_challans) {
+            dcData = dci.delivery_challans;
+            if (!soData && dci.delivery_challans.sales_orders) soData = dci.delivery_challans.sales_orders;
+          }
+        }
+      }
+
+      // Direct SO lookup if we have sales_order_id on the transaction
+      if (!soData && txn.sales_order_id) {
         const { data: so } = await supabase
           .from('sales_orders')
           .select('so_number, customer_id, customers(company_name)')
           .eq('id', txn.sales_order_id)
           .maybeSingle();
         soData = so;
+        if (so?.customers) customerData = so.customers;
       }
 
       return {
         ...txn,
         delivery_challans: dcData,
         sales_orders: soData,
+        customer: customerData,
+        invoice: invoiceData,
         _type: 'transaction' as const
       };
     }));
@@ -1684,25 +1719,24 @@ export function Batches() {
                               <div className="text-xs text-gray-500">Reason: {txn.release_reason}</div>
                             )}
                             {!isReservation && txn.reference_number && (
-                              <div><strong>Reference:</strong> {txn.reference_number}</div>
+                              <div><strong>Ref:</strong> {txn.reference_number}</div>
                             )}
-                            {!isReservation && txn.delivery_challans && (
-                              <div className="text-xs text-blue-600">
-                                DC: {txn.delivery_challans.challan_number}
-                                {txn.delivery_challans.customers?.company_name && (
-                                  <span className="ml-1">- {txn.delivery_challans.customers.company_name}</span>
-                                )}
+                            {!isReservation && txn.customer?.company_name && (
+                              <div className="text-xs font-medium text-gray-700">
+                                Customer: {txn.customer.company_name}
                               </div>
                             )}
                             {!isReservation && txn.sales_orders && (
                               <div className="text-xs text-blue-600">
                                 SO: {txn.sales_orders.so_number}
-                                {txn.sales_orders.customers?.company_name && (
-                                  <span className="ml-1">- {txn.sales_orders.customers.company_name}</span>
-                                )}
                               </div>
                             )}
-                            {txn.notes && (
+                            {!isReservation && txn.delivery_challans && (
+                              <div className="text-xs text-blue-600">
+                                DO: {txn.delivery_challans.challan_number}
+                              </div>
+                            )}
+                            {txn.notes && !txn.notes.includes('[backfilled]') && (
                               <div className="text-xs text-gray-500 italic">{txn.notes}</div>
                             )}
                           </div>
