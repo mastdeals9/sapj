@@ -40,6 +40,12 @@ interface SalesInvoice {
   };
 }
 
+interface SOItemOption {
+  product_id: string;
+  product_name: string;
+  unit_price: number;
+}
+
 interface SalesOrderOption {
   id: string;
   so_number: string;
@@ -47,6 +53,7 @@ interface SalesOrderOption {
   advance_payment_amount: number;
   advance_payment_status: string;
   status: string;
+  items?: SOItemOption[];
 }
 
 interface InvoiceItem {
@@ -160,6 +167,7 @@ export function Sales() {
   const [pendingDCOptions, setPendingDCOptions] = useState<Array<{ challan_id: string; challan_number: string; challan_date: string; item_count: number }>>([]);
   const [customerSalesOrders, setCustomerSalesOrders] = useState<SalesOrderOption[]>([]);
   const [selectedSOId, setSelectedSOId] = useState<string>('');
+  const [soAutoLinked, setSoAutoLinked] = useState(false);
   const [selectedDCIds, setSelectedDCIds] = useState<string[]>([]);
   const [selectedChallanId, setSelectedChallanId] = useState<string>('');
   const [pendingDCsWithItems, setPendingDCsWithItems] = useState<DCWithItems[]>([]);
@@ -220,8 +228,50 @@ export function Sales() {
 
       if (error) throw error;
 
-      const dcItems = await Promise.all((data || []).map(async (item: any) => {
-        const unitPrice = item.selling_price || item.unit_price || 0;
+      // Check if selected DCs are linked to a Sales Order
+      const { data: dcData } = await supabase
+        .from('delivery_challans')
+        .select('id, sales_order_id')
+        .in('id', selectedDCIds)
+        .not('sales_order_id', 'is', null);
+
+      // Find a common SO from the DCs
+      const soIds = Array.from(new Set((dcData || []).map((d: any) => d.sales_order_id).filter(Boolean)));
+      let soItemPriceMap: Record<string, number> = {};
+
+      if (soIds.length === 1) {
+        // All DCs link to the same SO — auto-link it
+        const linkedSoId = soIds[0];
+        setSelectedSOId(linkedSoId);
+        setSoAutoLinked(true);
+
+        // Load SO items to get agreed prices
+        const { data: soItems } = await supabase
+          .from('sales_order_items')
+          .select('product_id, unit_price')
+          .eq('sales_order_id', linkedSoId);
+
+        (soItems || []).forEach((si: any) => {
+          soItemPriceMap[si.product_id] = si.unit_price;
+        });
+      } else if (soIds.length === 0 && selectedSOId) {
+        // DCs have no SO link — keep existing manual SO selection but don't auto-set
+        setSoAutoLinked(false);
+        const { data: soItems } = await supabase
+          .from('sales_order_items')
+          .select('product_id, unit_price')
+          .eq('sales_order_id', selectedSOId);
+        (soItems || []).forEach((si: any) => {
+          soItemPriceMap[si.product_id] = si.unit_price;
+        });
+      } else {
+        setSoAutoLinked(false);
+      }
+
+      const dcItems = (data || []).map((item: any) => {
+        // Use SO price if available for this product, else fall back to DC selling_price
+        const soPrice = soItemPriceMap[item.product_id];
+        const unitPrice = soPrice !== undefined ? soPrice : (item.selling_price || item.unit_price || 0);
 
         return {
           product_id: item.product_id,
@@ -234,7 +284,7 @@ export function Sales() {
           dc_number: item.challan_number,
           max_quantity: item.remaining_quantity,
         };
-      }));
+      });
 
       if (dcItems.length > 0) {
         setItems(dcItems.map(item => ({
@@ -428,14 +478,32 @@ export function Sales() {
     try {
       const { data, error } = await supabase
         .from('sales_orders')
-        .select('id, so_number, total_amount, advance_payment_amount, advance_payment_status, status')
+        .select(`
+          id, so_number, total_amount, advance_payment_amount, advance_payment_status, status,
+          sales_order_items(product_id, unit_price, products(product_name))
+        `)
         .eq('customer_id', customerId)
         .eq('is_archived', false)
         .in('status', ['approved', 'stock_reserved', 'shortage', 'pending_delivery', 'partially_delivered', 'delivered'])
         .order('created_at', { ascending: false });
 
       if (error) throw error;
-      setCustomerSalesOrders(data || []);
+
+      const soOptions: SalesOrderOption[] = (data || []).map((so: any) => ({
+        id: so.id,
+        so_number: so.so_number,
+        total_amount: so.total_amount,
+        advance_payment_amount: so.advance_payment_amount,
+        advance_payment_status: so.advance_payment_status,
+        status: so.status,
+        items: (so.sales_order_items || []).map((item: any) => ({
+          product_id: item.product_id,
+          product_name: item.products?.product_name || 'Unknown',
+          unit_price: item.unit_price || 0,
+        })),
+      }));
+
+      setCustomerSalesOrders(soOptions);
     } catch (error) {
       console.error('Error loading customer sales orders:', error);
       setCustomerSalesOrders([]);
@@ -1110,6 +1178,7 @@ export function Sales() {
     setPendingDCOptions([]);
     setSelectedDCIds([]);
     setSelectedSOId('');
+    setSoAutoLinked(false);
     setCustomerSalesOrders([]);
     setFormData({
       invoice_number: '',
@@ -1349,6 +1418,7 @@ export function Sales() {
                       setPendingChallans([]);
                       setSelectedDCIds([]);
                       setSelectedSOId('');
+                      setSoAutoLinked(false);
                       setCustomerSalesOrders([]);
                       setItems([{
                         product_id: '',
@@ -1377,7 +1447,13 @@ export function Sales() {
                   <DCMultiSelect
                     options={pendingDCOptions}
                     selectedDCIds={selectedDCIds}
-                    onChange={setSelectedDCIds}
+                    onChange={(ids) => {
+                      if (ids.length === 0) {
+                        setSoAutoLinked(false);
+                        setSelectedSOId('');
+                      }
+                      setSelectedDCIds(ids);
+                    }}
                     placeholder="Select DCs"
                   />
                 </div>
@@ -1394,32 +1470,69 @@ export function Sales() {
               </div>
 
               {customerSalesOrders.length > 0 && !editingInvoice && (
-                <div className="p-3 bg-blue-50 border-2 border-blue-200 rounded-lg">
-                  <label className="block text-sm font-bold text-blue-900 mb-2">
-                    🔗 Link to Sales Order (for advance payment tracking)
+                <div className={`p-3 rounded-lg border-2 ${soAutoLinked ? 'bg-green-50 border-green-300' : 'bg-blue-50 border-blue-200'}`}>
+                  <label className={`block text-sm font-bold mb-2 ${soAutoLinked ? 'text-green-900' : 'text-blue-900'}`}>
+                    Link to Sales Order {soAutoLinked ? '(auto-linked from DC)' : '(for advance payment tracking)'}
                   </label>
-                  <select
-                    value={selectedSOId}
-                    onChange={(e) => setSelectedSOId(e.target.value)}
-                    className="w-full px-3 py-2 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-medium"
-                  >
-                    <option value="">-- Select Sales Order (if this invoice is from an SO) --</option>
-                    {customerSalesOrders.map(so => (
-                      <option key={so.id} value={so.id}>
-                        {so.so_number} - Rp {so.total_amount.toLocaleString('id-ID')}
-                        {so.advance_payment_amount > 0
-                          ? ` 💰 ADVANCE PAID: Rp ${so.advance_payment_amount.toLocaleString('id-ID')}`
-                          : ' (No advance)'}
-                      </option>
-                    ))}
-                  </select>
-                  {selectedSOId && (() => {
+                  {soAutoLinked ? (
+                    <div className="flex items-center justify-between">
+                      <div>
+                        {(() => {
+                          const so = customerSalesOrders.find(s => s.id === selectedSOId);
+                          return so ? (
+                            <div>
+                              <p className="text-sm font-semibold text-green-800">{so.so_number}</p>
+                              {so.items && so.items.length > 0 && (
+                                <p className="text-xs text-green-700 mt-0.5">
+                                  Products: {so.items.map(i => i.product_name).join(', ')}
+                                </p>
+                              )}
+                              {so.advance_payment_amount > 0 && (
+                                <p className="text-xs text-green-700 mt-0.5">
+                                  Advance: Rp {so.advance_payment_amount.toLocaleString('id-ID')}
+                                </p>
+                              )}
+                            </div>
+                          ) : null;
+                        })()}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => { setSelectedSOId(''); setSoAutoLinked(false); }}
+                        className="text-xs text-green-700 underline hover:text-green-900"
+                      >
+                        Change
+                      </button>
+                    </div>
+                  ) : (
+                    <select
+                      value={selectedSOId}
+                      onChange={(e) => setSelectedSOId(e.target.value)}
+                      className="w-full px-3 py-2 text-sm border-2 border-blue-300 rounded-lg focus:ring-2 focus:ring-blue-500 bg-white font-medium"
+                    >
+                      <option value="">-- Select Sales Order (if this invoice is from an SO) --</option>
+                      {customerSalesOrders.map(so => {
+                        const productNames = so.items && so.items.length > 0
+                          ? so.items.map(i => i.product_name).join(', ')
+                          : `Rp ${so.total_amount.toLocaleString('id-ID')}`;
+                        const advanceLabel = so.advance_payment_amount > 0
+                          ? ` | Advance: Rp ${so.advance_payment_amount.toLocaleString('id-ID')}`
+                          : '';
+                        return (
+                          <option key={so.id} value={so.id}>
+                            {so.so_number} — {productNames}{advanceLabel}
+                          </option>
+                        );
+                      })}
+                    </select>
+                  )}
+                  {selectedSOId && !soAutoLinked && (() => {
                     const so = customerSalesOrders.find(s => s.id === selectedSOId);
                     if (so && so.advance_payment_amount > 0) {
                       return (
                         <div className="mt-2 p-2 bg-green-100 border border-green-300 rounded">
                           <p className="text-sm font-bold text-green-800">
-                            ✅ Advance Payment: Rp {so.advance_payment_amount.toLocaleString('id-ID')} will be automatically applied to this invoice
+                            Advance Payment: Rp {so.advance_payment_amount.toLocaleString('id-ID')} will be automatically applied to this invoice
                           </p>
                           <p className="text-xs text-green-700 mt-1">
                             The invoice payment status will be updated automatically after saving.
@@ -1430,16 +1543,16 @@ export function Sales() {
                     if (selectedSOId) {
                       return (
                         <p className="text-xs text-blue-600 mt-2">
-                          ℹ️ This SO has no advance payment recorded.
+                          This SO has no advance payment recorded.
                         </p>
                       );
                     }
                     return null;
                   })()}
-                  {customerSalesOrders.some(so => so.advance_payment_amount > 0) && !selectedSOId && (
+                  {customerSalesOrders.some(so => so.advance_payment_amount > 0) && !selectedSOId && !soAutoLinked && (
                     <div className="mt-2 p-2 bg-amber-50 border border-amber-300 rounded">
                       <p className="text-xs font-medium text-amber-800">
-                        ⚠️ IMPORTANT: This customer has Sales Orders with advance payments. Select the correct SO above to apply advance payment to this invoice!
+                        This customer has Sales Orders with advance payments. Select the correct SO above to apply advance payment to this invoice.
                       </p>
                     </div>
                   )}
